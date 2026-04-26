@@ -1,0 +1,14 @@
+{
+  "name": "edutech-attendance",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @edutech/api",
+    "dev:api": "npm run dev -w @edutech/api",
+    "dev:web": "npm run dev -w @edutech/web",
+    "build": "npm run build -w @edutech/api && npm run build -w @edutech/web",
+    "lint": "npm run lint -w @edutech/api && npm run lint -w @edutech/web"
+  }
+}

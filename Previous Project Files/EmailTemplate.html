@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body style="margin:0;padding:0;font-family:Arial,sans-serif;background-color:#f4f7ff;">
+  <div style="padding:20px;">
+    <div style="max-width:450px;margin:0 auto;background:#ffffff;border-radius:15px;overflow:hidden;border:1px solid #e1e4e8;">
+      <div style="background:linear-gradient(135deg,#38bdf8,#6366f1);padding:30px;text-align:center;color:#ffffff;">
+        <h2 style="margin:0;">Attendance Marked!</h2>
+        <p style="opacity:0.9;margin:5px 0 0 0;">EduTech Solutions Digital Portal</p>
+      </div>
+      <div style="padding:30px;color:#334155;">
+        <p>Hello <strong><?= name ?></strong>,</p>
+        <p>Your <strong><?= type ?></strong> attendance has been logged successfully.</p>
+        <div style="background:#f1f5f9;padding:15px;border-radius:10px;font-size:14px;">
+          <? if (category === 'Guest') { ?>
+            <p style="margin:5px 0;"><strong>Category:</strong> <?= category ?></p>
+            <p style="margin:5px 0;"><strong>Purpose:</strong> <?= purpose ?></p>
+            <p style="margin:5px 0;"><strong>Date:</strong> <?= date ?></p>
+            <p style="margin:5px 0;"><strong>Time:</strong> <?= time ?></p>
+            <p style="margin:5px 0;"><strong>Location:</strong> <?= location ?></p>
+          <? } else { ?>
+            <? if (uniqueId !== "N/A") { ?>
+            <p style="margin:5px 0;"><strong>Your ID:</strong>
+              <span style="background:#e0e7ff;color:#4338ca;padding:2px 10px;border-radius:20px;font-weight:bold;"><?= uniqueId ?></span>
+            </p>
+            <? } ?>
+            <p style="margin:5px 0;"><strong>Category:</strong> <?= category ?></p>
+            <p style="margin:5px 0;"><strong>Status:</strong>
+              <span style="color:<?= status === 'Late' ? '#ef4444' : '#22c55e' ?>;font-weight:bold;"><?= status ?></span>
+            </p>
+            <p style="margin:5px 0;"><strong>Date:</strong> <?= date ?></p>
+            <p style="margin:5px 0;"><strong>Time:</strong> <?= time ?></p>
+            <p style="margin:5px 0;"><strong>Location:</strong> <?= location ?></p>
+          <? } ?>
+        </div>
+        <p style="font-size:12px;color:#94a3b8;margin-top:25px;text-align:center;">
+          This is an automated receipt. Please keep it for your records.
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

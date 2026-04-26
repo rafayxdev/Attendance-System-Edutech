@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String
+  role         String
+  uniqueId     String?
+  fullName     String
+  isActive     Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  attendance   AttendanceLog[]
+}
+
+model AttendanceLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  guestName      String?
+  guestEmail     String?
+  category       String
+  purpose        String?
+  attendanceType String
+  locationText   String
+  status         String
+  ipAddress      String
+  latitude       Float?
+  longitude      Float?
+  attendanceDay  String   @db.VarChar(10)
+  imageData      Bytes?
+  imageMimeType  String?
+  imageFileName  String?
+  imageSize      Int?
+  createdAt      DateTime @default(now())
+  emailLogs      EmailLog[]
+
+  @@index([attendanceDay])
+  @@index([userId, attendanceDay])
+  @@index([guestName, attendanceDay])
+}
+
+model AccessPolicy {
+  id                String   @id @default(cuid())
+  environmentName   String   @unique
+  allowedIpPrefixes String
+  campusLat         Float
+  campusLng         Float
+  radiusMeters      Int
+  enforceGate       Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model EmailLog {
+  id                String         @id @default(cuid())
+  attendanceId      String
+  attendance        AttendanceLog  @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  recipientEmail    String
+  subject           String
+  providerName      String
+  providerMessageId String?
+  status            String
+  errorMessage      String?
+  sentAt            DateTime      @default(now())
+
+  @@index([attendanceId])
+  @@index([recipientEmail])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorEmail String?
+  action     String
+  payload    Json?
+  createdAt  DateTime @default(now())
+}

@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+:root { --blue:#38bdf8; --indigo:#6366f1; --bg:#060d1f; --card-bg:rgba(255,255,255,0.06); --border:rgba(255,255,255,0.1); }
+* { box-sizing: border-box; }
+body { margin:0; font-family:'DM Sans',sans-serif; background:var(--bg); display:flex; justify-content:center; align-items:center; min-height:100vh; overflow:auto; padding:20px; }
+.bg-blob { position:fixed; border-radius:50%; filter:blur(80px); opacity:0.15; pointer-events:none; z-index:0; animation:blobFloat 8s ease-in-out infinite alternate; }
+.bg-blob.b1 { width:400px; height:400px; background:var(--indigo); top:-100px; left:-100px; }
+.bg-blob.b2 { width:300px; height:300px; background:var(--blue); bottom:-80px; right:-80px; animation-delay:3s; }
+@keyframes blobFloat { from { transform:translate(0,0) scale(1); } to { transform:translate(30px,20px) scale(1.08); } }
+
+.card { position:relative; z-index:1; width:100%; max-width:420px; padding:38px 32px; border-radius:24px; background:var(--card-bg); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); box-shadow:0 30px 70px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1); border:1px solid var(--border); color:white; text-align:center; animation:cardIn 0.6s cubic-bezier(0.16,1,0.3,1) both; }
+@keyframes cardIn { from { opacity:0; transform:translateY(30px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+.logo img { width:130px; display:block; margin:0 auto 10px; }
+h2 { margin:8px 0 2px; font-family:'Syne',sans-serif; font-size:22px; font-weight:800; background:linear-gradient(135deg,#fff 40%,var(--blue)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+.subtitle { font-size:12px; opacity:0.5; margin-bottom:28px; text-transform:uppercase; letter-spacing:0.06em; }
+
+.role-tabs { display:flex; gap:8px; margin-bottom:22px; background:rgba(255,255,255,0.04); border-radius:12px; padding:5px; border:1px solid var(--border); }
+.role-tab { flex:1; padding:9px; border-radius:9px; border:none; cursor:pointer; font-family:'DM Sans',sans-serif; font-size:13px; font-weight:500; background:transparent; color:rgba(255,255,255,0.45); transition:all 0.25s; display:flex; align-items:center; justify-content:center; gap:6px; }
+.role-tab.active { background:linear-gradient(135deg,var(--blue),var(--indigo)); color:white; }
+
+.input-group { margin-bottom:13px; position:relative; text-align:left; }
+.input-group label { display:block; font-size:11px; opacity:0.5; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:6px; }
+.input-group input { width:100%; padding:12px 16px 12px 42px; border-radius:12px; border:1px solid var(--border); outline:none; background:rgba(255,255,255,0.07); color:white; font-family:'DM Sans',sans-serif; font-size:14px; transition:all 0.3s; }
+.input-group input::placeholder { color:rgba(255,255,255,0.35); }
+.input-group input:focus { background:rgba(255,255,255,0.12); border-color:rgba(56,189,248,0.5); box-shadow:0 0 0 3px rgba(56,189,248,0.1); }
+.input-icon { position:absolute; left:14px; bottom:13px; color:rgba(255,255,255,0.3); font-size:15px; pointer-events:none; }
+.pw-toggle { position:absolute; right:14px; bottom:13px; color:rgba(255,255,255,0.3); font-size:14px; cursor:pointer; background:none; border:none; padding:0; }
+
+#msg { padding:11px 14px; border-radius:10px; font-size:13px; margin-bottom:14px; text-align:left; display:none; }
+#msg.error { background:rgba(244,63,94,0.1); border:1px solid rgba(244,63,94,0.3); color:#fb7185; }
+#msg.info { background:rgba(56,189,248,0.1); border:1px solid rgba(56,189,248,0.3); color:var(--blue); }
+
+button[type=submit] { width:100%; padding:14px; border-radius:14px; border:none; background:linear-gradient(135deg,var(--blue),var(--indigo)); color:white; font-family:'Syne',sans-serif; font-weight:700; font-size:15px; cursor:pointer; transition:all 0.3s; letter-spacing:0.02em; }
+button[type=submit]:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 12px 30px rgba(56,189,248,0.3); }
+button[type=submit]:disabled { opacity:0.45; cursor:not-allowed; transform:none; }
+
+.hint { font-size:11px; opacity:0.4; margin-top:16px; line-height:1.5; }
+
+/* ── Guest Types ── */
+.type-section { margin:16px 0;padding:14px; background:rgba(255,255,255,0.04);border-radius:12px;border:1px solid var(--border); }
+.type-label { font-size:11px;opacity:0.6;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px; text-align:left; }
+.radio-group { display:flex;gap:12px;justify-content:center; }
+.radio-btn { flex:1;padding:10px;border-radius:10px;border:1px solid var(--border); cursor:pointer;font-size:13px;font-weight:500;transition:all 0.25s; display:flex;align-items:center;justify-content:center;gap:6px;background:transparent; }
+.radio-btn input[type=radio] { display:none; }
+.radio-btn.selected-in { background:rgba(56,189,248,0.15);border-color:var(--blue);color:var(--blue); }
+.radio-btn.selected-out { background:rgba(99,102,241,0.15);border-color:var(--indigo);color:#a5b4fc; }
+#locMsg { padding:11px 14px; border-radius:10px; font-size:13px; margin-bottom:14px; text-align:left; background:rgba(255,255,255,0.06); border:1px solid var(--border); }
+
+/* ── Success Screen ── */
+.success-screen { text-align:center;padding:10px 0; }
+.success-icon { font-size:52px;margin-bottom:10px; }
+.success-screen h2 { font-family:'Syne',sans-serif;font-size:24px;-webkit-text-fill-color:white;margin-bottom:6px; }
+.success-screen p { opacity:0.6;font-size:13px;margin-bottom:20px; }
+.new-entry-btn { display:inline-block;padding:12px 28px;border-radius:12px;border:1px solid var(--border); background:rgba(255,255,255,0.07);color:white;cursor:pointer;font-size:14px; transition:all 0.3s; }
+.new-entry-btn:hover { background:rgba(255,255,255,0.12);transform:translateY(-1px); }
+/* ── Access Gate Overlay ── */
+#accessGate {
+  position:fixed;inset:0;z-index:9999;background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:white;font-family:'DM Sans',sans-serif;text-align:center;
+  transition:opacity 0.4s ease;
+}
+.gate-spinner {
+  width:46px;height:46px;border:3px solid rgba(56,189,248,0.15);
+  border-top-color:#38bdf8;border-radius:50%;
+  animation:spin 0.8s linear infinite;margin-bottom:20px;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="bg-blob b1"></div><div class="bg-blob b2"></div>
+<div id="accessGate">
+  <div class="gate-spinner"></div>
+  <h3 style="font-family:'Syne',sans-serif;font-size:18px;margin:0 0 8px;">Verifying Access…</h3>
+  <p style="opacity:0.5;font-size:13px;max-width:280px;line-height:1.6;">
+    Checking University Wi-Fi &amp; campus location…
+  </p>
+</div>
+<div class="card">
+  <div class="logo"><img src="https://lh3.googleusercontent.com/d/1Qm1mCJYLX6UWdbHd_DPfUOjDcl2_IJxT" alt="EduTech Logo"></div>
+  <h2>The EduTech Solutions</h2>
+  <p class="subtitle">Secure Portal Login</p>
+
+  <div class="role-tabs">
+    <button class="role-tab active" id="tabUser" onclick="switchRole('user')"><i class="fas fa-user"></i> User</button>
+    <button class="role-tab" id="tabGuest" onclick="switchRole('guest')"><i class="fas fa-user-clock"></i> Guest</button>
+    <button class="role-tab" id="tabAdmin" onclick="switchRole('admin')"><i class="fas fa-shield-alt"></i> Admin</button>
+  </div>
+
+  <form id="loginForm" onsubmit="doSubmit(event)">
+
+    <div id="loginSection">
+      <div class="input-group">
+        <label>Gmail Address</label>
+        <input type="email" id="emailInput" placeholder="yourname@gmail.com" required autocomplete="email">
+        <i class="fas fa-envelope input-icon"></i>
+      </div>
+      <div class="input-group">
+        <label>Password</label>
+        <input type="password" id="passInput" placeholder="Enter your password" required autocomplete="current-password">
+        <i class="fas fa-lock input-icon"></i>
+        <button type="button" class="pw-toggle" onclick="togglePw()"><i class="fas fa-eye" id="eyeIcon"></i></button>
+      </div>
+    </div>
+
+    <div id="guestSection" style="display:none;">
+      <div class="input-group">
+        <input type="text" id="guestName" placeholder="Full Name">
+      </div>
+      <div class="input-group">
+        <input type="text" id="guestPurpose" placeholder="Purpose of Visit">
+      </div>
+      <div class="input-group">
+        <input type="email" id="guestEmail" placeholder="Email for Receipt (Optional)">
+      </div>
+
+      <div class="type-section">
+        <div class="type-label">Attendance Type</div>
+        <div class="radio-group">
+          <label class="radio-btn" id="btnIn">
+            <input type="radio" name="guestType" value="Time In" onchange="updateRadioUI()">
+            <i class="fas fa-sign-in-alt"></i> Time In
+          </label>
+          <label class="radio-btn" id="btnOut">
+            <input type="radio" name="guestType" value="Time Out" onchange="updateRadioUI()">
+            <i class="fas fa-sign-out-alt"></i> Time Out
+          </label>
+        </div>
+      </div>
+      <div id="locMsg">📍 Verifying location...</div>
+    </div>
+
+    <div id="msg"></div>
+
+    <button type="submit" id="mainBtn">
+      <i class="fas fa-sign-in-alt" id="btnIcon"></i>  <span id="btnText">Sign In</span>
+    </button>
+  </form>
+  <p class="hint">Access is restricted to authorized personnel.<br>Must be connected to University Wi-Fi.</p>
+</div>
+
+<script>
+// // =====================================================
+// // CONFIG  — adjust subnets to match your university
+// // =====================================================
+// var ALLOWED_IP_PREFIXES = ["137.59.221.", "137.59.223."]; // subnet prefixes, not full IPs
+// var CAMPUS_LAT = 25.4031708, CAMPUS_LON = 68.3291588, CAMPUS_RADIUS = 0.002;
+
+// =====================================================
+// CONFIG  — adjust subnets to match your Home
+// =====================================================
+var ALLOWED_IP_PREFIXES = ["137.59.221.136"]; // subnet prefixes, not full IPs
+var CAMPUS_LAT = 25.3833456, CAMPUS_LON = 68.3844759, CAMPUS_RADIUS = 0.002;
+// =====================================================
+// ACCESS GATE  (runs before anything else is shown)
+// =====================================================
+var _wifiOk = null, _locOk = null;
+var currentRole = 'user', guestLocStatus = "Checking...", guestIp = "Unknown";
+
+function _showAccessDenied(reason) {
+  document.body.innerHTML =
+    '<div style="font-family:\'DM Sans\',sans-serif;text-align:center;padding:60px 20px;' +
+    'color:white;background:#060d1f;min-height:100vh;display:flex;flex-direction:column;' +
+    'align-items:center;justify-content:center;">' +
+    '<div style="font-size:60px;margin-bottom:20px;">🔒</div>' +
+    '<h2 style="font-family:\'Syne\',sans-serif;font-size:24px;color:#f87171;margin:0 0 10px;">Access Denied</h2>' +
+    '<p style="opacity:0.65;max-width:340px;line-height:1.7;font-size:14px;">' + reason + '</p>' +
+    '<p style="opacity:0.3;font-size:11px;margin-top:30px;">EduTech Solutions — Restricted Portal</p>' +
+    '</div>';
+}
+
+function _evalGate() {
+  if (_wifiOk === null || _locOk === null) return; // wait for both checks to finish
+
+  if (_wifiOk && _locOk) {
+    // ✅ PASS — fade out and remove the overlay
+    var g = document.getElementById('accessGate');
+    if (g) { g.style.opacity = '0'; setTimeout(function(){ if (g.parentNode) g.parentNode.removeChild(g); }, 420); }
+  } else {
+    // ❌ FAIL — replace entire page
+    _showAccessDenied(!_wifiOk
+      ? 'You must be connected to the <strong>University Wi-Fi Network</strong> to access this portal.'
+      : 'You must be physically <strong>on campus</strong> to access this portal. GPS verification failed.');
+  }
+}
+
+window.onload = function() {
+  // ── Check 1: University Wi-Fi (IP) ──────────────────
+  fetch('https://api.ipify.org?format=json')
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      guestIp  = d.ip;
+      _wifiOk  = ALLOWED_IP_PREFIXES.some(function(p) { return d.ip.startsWith(p); });
+      _evalGate();
+    })
+    .catch(function() { _wifiOk = false; _evalGate(); });
+
+  // ── Check 2: Campus GPS location ────────────────────
+  if (!navigator.geolocation) { _locOk = false; _evalGate(); return; }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) {
+      var dist = Math.sqrt(
+        Math.pow(pos.coords.latitude  - CAMPUS_LAT, 2) +
+        Math.pow(pos.coords.longitude - CAMPUS_LON, 2)
+      );
+      _locOk = (dist < CAMPUS_RADIUS);
+      guestLocStatus = _locOk ? "On Campus" : "Outside Campus";
+
+      // Update guest section location badge
+      var lmsg = document.getElementById('locMsg');
+      if (lmsg) {
+        lmsg.innerHTML        = _locOk ? "✅ <strong>On Campus</strong> — Location verified"
+                                       : "❌ <strong>Outside Campus</strong> — You must be on university premises.";
+        lmsg.style.background  = _locOk ? "rgba(16,185,129,0.1)" : "rgba(220,38,38,0.1)";
+        lmsg.style.borderColor = _locOk ? "rgba(16,185,129,0.3)" : "rgba(220,38,38,0.3)";
+      }
+      _evalGate();
+    },
+    function() { _locOk = false; _evalGate(); },
+    { timeout: 10000 }
+  );
+};
+
+// =====================================================
+// UI CONTROLS
+// =====================================================
+function switchRole(role) {
+  currentRole = role;
+  ['user','guest','admin'].forEach(function(r) {
+    document.getElementById('tab' + r.charAt(0).toUpperCase() + r.slice(1))
+            .classList.toggle('active', r === role);
+  });
+  var isGuest = (role === 'guest');
+  document.getElementById('loginSection').style.display  = isGuest ? 'none'  : 'block';
+  document.getElementById('guestSection').style.display  = isGuest ? 'block' : 'none';
+  document.getElementById('emailInput').required         = !isGuest;
+  document.getElementById('passInput').required          = !isGuest;
+  document.getElementById('guestName').required          = isGuest;
+  document.getElementById('guestPurpose').required       = isGuest;
+  document.getElementById('btnIcon').className  = isGuest ? 'fas fa-check-circle' : 'fas fa-sign-in-alt';
+  document.getElementById('btnText').innerText  = isGuest ? 'Submit Attendance'   : 'Sign In';
+  document.getElementById('msg').style.display  = 'none';
+}
+
+function togglePw() {
+  var i = document.getElementById('passInput'), ico = document.getElementById('eyeIcon');
+  i.type = (i.type === 'password') ? 'text' : 'password';
+  ico.className = (i.type === 'password') ? 'fas fa-eye' : 'fas fa-eye-slash';
+}
+
+function updateRadioUI() {
+  var r = document.querySelector('input[name="guestType"]:checked');
+  document.getElementById('btnIn').classList.remove('selected-in');
+  document.getElementById('btnOut').classList.remove('selected-out');
+  if (r) {
+    (r.value === 'Time In')
+      ? document.getElementById('btnIn').classList.add('selected-in')
+      : document.getElementById('btnOut').classList.add('selected-out');
+  }
+}
+
+function showMsg(text, type) {
+  var el = document.getElementById('msg');
+  el.textContent = text; el.className = type; el.style.display = 'block';
+}
+
+// =====================================================
+// MAIN SUBMIT
+// =====================================================
+function doSubmit(e) {
+  e.preventDefault();
+  var btn = document.getElementById('mainBtn');
+  var btnIcon = document.getElementById('btnIcon');
+  var btnText = document.getElementById('btnText');
+
+  // ── GUEST FLOW ──────────────────────────────────────
+  if (currentRole === 'guest') {
+    var typeSelected = document.querySelector('input[name="guestType"]:checked');
+    if (!typeSelected)    { showMsg('⚠️ Please select Time In or Time Out.', 'error'); return; }
+
+    var name    = document.getElementById('guestName').value.trim();
+    var purpose = document.getElementById('guestPurpose').value.trim();
+    var email   = document.getElementById('guestEmail').value.trim();
+    if (!name || !purpose) { showMsg('⚠️ Please fill out Name and Purpose.', 'error'); return; }
+
+    // Re-enforce location at submit time (double-check)
+    if (guestLocStatus !== "On Campus") { showMsg("❌ You must be on campus to mark attendance.", "error"); return; }
+
+    btn.disabled = true; btnIcon.className = 'fas fa-spinner fa-spin'; btnText.innerText = 'Processing…';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        if (res === "Success") {
+          document.querySelector('.card').innerHTML =
+            '<div class="success-screen"><div class="success-icon">✅</div>' +
+            '<h2>Attendance Marked!</h2><p>Your guest record has been securely saved.</p>' +
+            '<button class="new-entry-btn" onclick="location.reload()"><i class="fas fa-redo"></i> Back to Home</button></div>';
+        } else {
+          showMsg('❌ ' + res, 'error');
+          btn.disabled = false; btnIcon.className = 'fas fa-check-circle'; btnText.innerText = 'Submit Attendance';
+        }
+      })
+      .processGuestForm({ name: name, purpose: purpose, email: email, type: typeSelected.value, location: guestLocStatus, ip: guestIp });
+
+  // ── USER / ADMIN FLOW ────────────────────────────────
+  } else {
+    var email = document.getElementById('emailInput').value.trim().toLowerCase();
+    var pass  = document.getElementById('passInput').value;
+    if (!email.endsWith('@gmail.com')) { showMsg('⚠️ Only Gmail addresses are allowed.', 'error'); return; }
+
+    btn.disabled = true; btnIcon.className = 'fas fa-spinner fa-spin'; btnText.innerText = 'Verifying…';
+
+    google.script.run
+  .withSuccessHandler(function(result) {
+    // Guard: if backend crashed, result will be null
+    if (!result) {
+      showMsg('❌ Server error. Please try again.', 'error');
+      btn.disabled = false; 
+      btnIcon.className = 'fas fa-sign-in-alt'; 
+      btnText.innerText = 'Sign In';
+      return;
+    }
+
+    if (result.success) {
+      sessionStorage.setItem('et_email',    result.email);
+      sessionStorage.setItem('et_name',     result.name     || '');
+      sessionStorage.setItem('et_role',     result.role);
+      sessionStorage.setItem('et_uniqueId', result.uniqueId || 'N/A');
+
+      showMsg('✅ Login successful! Redirecting…', 'info');
+      setTimeout(function() {
+  var target = (result.role && result.role.toLowerCase() === 'admin') ? 'Admin' : 'Index';
+  google.script.run
+    .withSuccessHandler(function(url) {
+      window.top.location.href = url + '?page=' + target;
+    })
+    .getScriptUrl();
+}, 800);
+    } else {
+      showMsg('❌ ' + result.message, 'error');
+      btn.disabled = false; 
+      btnIcon.className = 'fas fa-sign-in-alt'; 
+      btnText.innerText = 'Sign In';
+    }
+  })
+  .withFailureHandler(function(err) {
+    showMsg('❌ Server error: ' + (err.message || 'Please try again.'), 'error');
+    btn.disabled = false; 
+    btnIcon.className = 'fas fa-sign-in-alt'; 
+    btnText.innerText = 'Sign In';
+  })
+  .loginUser(email, pass, currentRole);
+  }
+}
+</script>
+</body>
+</html>

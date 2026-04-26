@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+<style>
+:root {
+  --blue: #38bdf8;
+  --indigo: #6366f1;
+  --bg: #060d1f;
+  --card-bg: rgba(255,255,255,0.06);
+  --border: rgba(255,255,255,0.1);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg);
+  display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: auto; padding: 20px;
+}
+.bg-blob { position: fixed; border-radius: 50%; filter: blur(80px); opacity: 0.15; pointer-events: none; z-index: 0; animation: blobFloat 8s ease-in-out infinite alternate; }
+.bg-blob.b1 { width:400px;height:400px;background:var(--indigo);top:-100px;left:-100px; }
+.bg-blob.b2 { width:300px;height:300px;background:var(--blue);bottom:-80px;right:-80px;animation-delay:3s; }
+@keyframes blobFloat { from { transform: translate(0,0) scale(1); } to { transform: translate(30px,20px) scale(1.08); } }
+
+.card {
+  position:relative;z-index:1;width:100%;max-width:460px; padding:35px 30px;border-radius:24px;
+  background:var(--card-bg);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+  box-shadow:0 30px 70px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.1);
+  border:1px solid var(--border);color:white;text-align:center;
+  animation:cardIn 0.6s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes cardIn { from{opacity:0;transform:translateY(30px) scale(0.97);}to{opacity:1;transform:translateY(0) scale(1);} }
+
+.logo img { width:140px;display:block;margin:0 auto 8px;height:auto; }
+h2 { margin:8px 0 4px;font-family:'Syne',sans-serif;font-size:22px;font-weight:800; background:linear-gradient(135deg,#fff 40%,var(--blue)); -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; }
+.subtitle { font-size:12px;opacity:0.55;margin-bottom:16px;letter-spacing:0.05em;text-transform:uppercase; }
+
+.user-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 16px;
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  text-align: left;
+  box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+}
+.uc-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 14px; }
+.uc-row:last-child { margin-bottom: 0; }
+.uc-label { color: rgba(255, 255, 255, 0.5); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.uc-val { font-weight: 600; color: white; text-align: right; }
+.uc-val.id-badge {
+  background: rgba(56, 189, 248, 0.15); color: #38bdf8;
+  padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3); font-family: 'Syne', sans-serif; letter-spacing: 1px;
+}
+
+.input-group { margin-bottom:12px;position:relative; }
+input { width:100%;padding:13px 16px;border-radius:12px;border:1px solid var(--border); outline:none;background:rgba(255,255,255,0.07);color:white; font-family:'DM Sans',sans-serif;font-size:14px;transition:all 0.3s; }
+input::placeholder { color:rgba(255,255,255,0.4); }
+input:focus { background:rgba(255,255,255,0.13);border-color:rgba(56,189,248,0.5); box-shadow:0 0 0 3px rgba(56,189,248,0.1); }
+
+.type-section { margin:16px 0;padding:14px; background:rgba(255,255,255,0.04);border-radius:12px;border:1px solid var(--border); }
+.type-label { font-size:11px;opacity:0.6;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px; }
+.radio-group { display:flex;gap:12px;justify-content:center; }
+.radio-btn { flex:1;padding:10px;border-radius:10px;border:1px solid var(--border); cursor:pointer;font-size:13px;font-weight:500;transition:all 0.25s; display:flex;align-items:center;justify-content:center;gap:6px;background:transparent; }
+.radio-btn input[type=radio] { display:none; }
+.radio-btn.selected-in { background:rgba(56,189,248,0.15);border-color:var(--blue);color:var(--blue); }
+.radio-btn.selected-out { background:rgba(99,102,241,0.15);border-color:var(--indigo);color:#a5b4fc; }
+
+#msg { padding:11px 14px;border-radius:10px;font-size:13px;margin-bottom:14px; background:rgba(255,255,255,0.06);border:1px solid var(--border);text-align:left; }
+button[type=submit] { width:100%;padding:15px;border-radius:14px;border:none; background:linear-gradient(135deg,var(--blue) 0%,var(--indigo) 100%); color:white;font-family:'Syne',sans-serif;font-weight:700;font-size:15px; cursor:pointer;transition:all 0.3s;letter-spacing:0.02em; position:relative; overflow:hidden; }
+button[type=submit]:hover:not(:disabled) { transform:translateY(-2px);box-shadow:0 12px 30px rgba(56,189,248,0.3); }
+button[type=submit]:disabled { opacity:0.45;cursor:not-allowed;transform:none; }
+
+.logout-link { display: inline-block; margin-top: 15px; color: rgba(255,255,255,0.4); font-size: 12px; text-decoration: underline; cursor: pointer; transition: 0.2s; }
+.logout-link:hover { color: #f43f5e; }
+
+.success-screen { text-align:center;padding:10px 0; }
+.success-icon { font-size:52px;margin-bottom:10px; }
+.success-screen h2 { font-family:'Syne',sans-serif;font-size:24px;-webkit-text-fill-color:white;margin-bottom:6px; }
+.success-screen p { opacity:0.6;font-size:13px;margin-bottom:20px; }
+.new-entry-btn { display:inline-block;padding:12px 28px;border-radius:12px;border:1px solid var(--border); background:rgba(255,255,255,0.07);color:white;cursor:pointer;font-size:14px; transition:all 0.3s; }
+.new-entry-btn:hover { background:rgba(255,255,255,0.12);transform:translateY(-1px); }
+</style>
+</head>
+<body>
+
+<div class="bg-blob b1"></div><div class="bg-blob b2"></div>
+
+<div class="card">
+  <div class="logo"><img src="https://lh3.googleusercontent.com/d/1Qm1mCJYLX6UWdbHd_DPfUOjDcl2_IJxT" alt="EduTech Logo"></div>
+  <h2>The EduTech Solutions</h2>
+  <p class="subtitle">Digital Attendance System</p>
+
+  <form id="attForm">
+    <div class="user-card">
+      <div class="uc-row"><span class="uc-label">Full Name</span><span class="uc-val" id="dispName">Loading...</span></div>
+      <div class="uc-row"><span class="uc-label">Unique ID</span><span class="uc-val id-badge" id="dispId">--</span></div>
+      <div class="uc-row"><span class="uc-label">Role</span><span class="uc-val" id="dispRole">Loading...</span></div>
+      <div class="uc-row"><span class="uc-label">Email</span><span class="uc-val" id="dispEmail" style="font-size:12px;opacity:0.8;">Loading...</span></div>
+    </div>
+    
+    <!-- <input type="hidden" name="token"    id="hiddenToken"> -->
+    <input type="hidden" name="location" id="locStatus"  value="Checking...">
+    <input type="hidden" name="ip"       id="userIp"     value="Unknown">
+
+    <div class="input-group" id="purposeWrap" style="display:none;">
+      <input type="text" name="purpose" id="purpose" placeholder="Purpose of Visit">
+    </div>
+
+    <div class="type-section">
+      <div class="type-label">Attendance Type</div>
+      <div class="radio-group">
+        <label class="radio-btn" id="btnIn">
+          <input type="radio" name="type" value="Time In" required>
+          <i class="fas fa-sign-in-alt"></i> Time In
+        </label>
+        <label class="radio-btn" id="btnOut">
+          <input type="radio" name="type" value="Time Out">
+          <i class="fas fa-sign-out-alt"></i> Time Out
+        </label>
+      </div>
+    </div>
+
+    <div id="msg">📍 Verifying your location...</div>
+    <button type="submit" id="btn" disabled><i class="fas fa-check-circle"></i>  Submit Attendance</button>
+  </form>
+
+  <div class="logout-link" onclick="doLogout()"><i class="fas fa-sign-out-alt"></i> Logout from Portal</div>
+</div>
+
+<script>
+// var sessionToken = '';
+
+function initSession() {
+  var params = new URLSearchParams(window.location.search);
+  // sessionToken = params.get('token') || sessionStorage.getItem('et_token') || '';
+  
+  // if (!sessionToken) { redirectToLogin(); return; }
+
+  var email = sessionStorage.getItem('et_email') || 'Unknown';
+  var name  = sessionStorage.getItem('et_name')  || 'Unknown';
+  var role  = sessionStorage.getItem('et_role')  || 'Unknown';
+  var uid   = sessionStorage.getItem('et_uniqueId') || 'N/A';
+
+  document.getElementById('dispEmail').textContent = email;
+  document.getElementById('dispName').textContent  = name;
+  document.getElementById('dispRole').textContent  = role;
+  document.getElementById('dispId').textContent    = uid;
+  // document.getElementById('hiddenToken').value     = sessionToken;
+
+  if (role.toLowerCase() === "guest") {
+    document.getElementById('purposeWrap').style.display = "block";
+  }
+}
+
+function redirectToLogin() {
+  sessionStorage.clear();
+  google.script.run.withSuccessHandler(function(url) {
+    window.top.location.href = url + '?page=Login';
+  }).getScriptUrl();
+}
+
+function doLogout() {
+  sessionStorage.clear();
+  google.script.run
+    .withSuccessHandler(function(url) {
+      window.location.assign(url + '?page=Login');
+    })
+    .getScriptUrl();
+}
+
+/* Radio Visuals */
+document.querySelectorAll('.radio-btn input[type=radio]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.getElementById('btnIn').classList.remove('selected-in');
+    document.getElementById('btnOut').classList.remove('selected-out');
+    if (r.value === 'Time In') document.getElementById('btnIn').classList.add('selected-in');
+    else document.getElementById('btnOut').classList.add('selected-out');
+  });
+});
+
+/* ── Session init ── */
+window.onload = function() { initSession(); };
+
+/* ================================================================
+   UNIVERSAL SECURITY GATEKEEPER — Wi-Fi (IP) + Campus GPS
+   ================================================================
+   HOW IT WORKS:
+   - Shows a full-screen overlay immediately on page load.
+   - Runs BOTH checks in parallel (IP fetch + GPS).
+   - Only removes the overlay when BOTH checks pass.
+   - If either check fails → shows a permanent "Access Denied" screen.
+
+   TO CONFIGURE:
+   - allowedPrefixes : add/remove your university's public IP subnet(s).
+                       Use subnet prefix format e.g. "137.59.221." (NOT a full IP).
+   - CAMPUS_LAT/LON  : GPS coordinates of the campus centre.
+   - dist < 0.002    : ~220 m radius — increase if campus is large.
+   ================================================================ */
+(function () {
+
+  /* ── CONFIG ──────────────────────────────────────────────────── */
+  // var allowedPrefixes = ["137.59.221.", "137.59.223."];  // ← university subnet prefixes
+  // var CAMPUS_LAT = 25.4031708, CAMPUS_LON = 68.3291588;
+  // var CAMPUS_RADIUS = 0.002; // ~220 metre radius
+  /* ─────────────────────────────────────────────────────────────── */
+ var allowedPrefixes = ["137.59.221.", "137.59.223."]  // ← Home subnet prefixes
+  var CAMPUS_LAT = 25.3833456, CAMPUS_LON = 68.3844759;
+  var CAMPUS_RADIUS = 0.002; // ~220 metre radius
+  /* Build the overlay */
+  var overlay = document.createElement('div');
+  overlay.id = 'securityGate';
+  overlay.style.cssText = [
+    'position:fixed;top:0;left:0;width:100%;height:100%;',
+    'background:#060d1f;z-index:999999;',
+    'display:flex;flex-direction:column;align-items:center;justify-content:center;',
+    'color:white;font-family:"DM Sans",sans-serif;text-align:center;padding:20px;',
+    'transition:opacity 0.5s;'
+  ].join('');
+  overlay.innerHTML =
+    '<div id="sg-icon" style="font-size:40px;margin-bottom:20px;color:#38bdf8;">' +
+      '<i class="fas fa-spinner fa-spin"></i>' +
+    '</div>' +
+    '<h2 id="sg-title" style="font-family:\'Syne\',sans-serif;font-size:24px;margin:0 0 10px 0;">' +
+      'Verifying Security Clearance' +
+    '</h2>' +
+    '<p id="sg-msg" style="opacity:0.7;max-width:350px;line-height:1.5;font-size:14px;">' +
+      'Checking University Network and Campus Location...' +
+    '</p>';
+  document.documentElement.appendChild(overlay);
+
+  /* Gate state */
+  var ipPassed = false, geoPassed = false, failed = false;
+
+  /* ── Access Denied screen ─────────────────────────────────────── */
+  function denyAccess(reason) {
+    if (failed) return;
+    failed = true;
+    document.getElementById('sg-icon').innerHTML =
+      '<div style="font-size:52px;">🔒</div>';
+    var title = document.getElementById('sg-title');
+    title.style.color = '#f87171';
+    title.innerText = 'Access Denied';
+    document.getElementById('sg-msg').innerHTML =
+      reason +
+      '<br><br>' +
+      '<span style="opacity:0.5;font-size:12px;">' +
+        'You must be connected to the University Wi-Fi Network ' +
+        'and physically located on Campus.' +
+      '</span>';
+  }
+
+  /* ── Unlock — only fires when BOTH checks pass ────────────────── */
+  function checkUnlock() {
+    if (ipPassed && geoPassed && !failed) {
+      overlay.style.opacity = '0';
+      setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 500);
+    }
+  }
+
+  /* ── CHECK 1 : University Wi-Fi (public IP) ───────────────────── */
+  fetch('https://api.ipify.org?format=json')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      var userIpInput = document.getElementById('userIp');
+      if (userIpInput) userIpInput.value = data.ip;
+
+      /* FIX: use subnet prefix (e.g. "137.59.221.") so ANY device
+              on that network segment is allowed — not just one exact IP. */
+      if (allowedPrefixes.some(function (p) { return data.ip.startsWith(p); })) {
+        ipPassed = true;
+        checkUnlock();
+      } else {
+        denyAccess('Unauthorized network connection detected.<br>Please connect to the University Wi-Fi.');
+      }
+    })
+    .catch(function () {
+      denyAccess('Network verification failed. Please check your connection.');
+    });
+
+  /* ── CHECK 2 : Campus GPS location ───────────────────────────── */
+  if (!navigator.geolocation) {
+    denyAccess('Your browser does not support location access.');
+  } else {
+    navigator.geolocation.getCurrentPosition(
+      function (pos) {
+        var dist = Math.sqrt(
+          Math.pow(pos.coords.latitude  - CAMPUS_LAT, 2) +
+          Math.pow(pos.coords.longitude - CAMPUS_LON, 2)
+        );
+        if (dist < CAMPUS_RADIUS) {
+          /* Update hidden field and status message */
+          var locInput = document.getElementById('locStatus');
+          if (locInput) locInput.value = 'On Campus';
+
+          var msgBox = document.getElementById('msg');
+          if (msgBox) {
+            msgBox.innerHTML      = '✅ <strong>On Campus</strong> — Location verified';
+            msgBox.style.background  = 'rgba(16,185,129,0.1)';
+            msgBox.style.borderColor = 'rgba(16,185,129,0.3)';
+          }
+          var submitBtn = document.getElementById('btn');
+          if (submitBtn) submitBtn.disabled = false;
+
+          geoPassed = true;
+          checkUnlock();
+        } else {
+          denyAccess('You are not located within the University premises.');
+        }
+      },
+      function () {
+        denyAccess('Location access denied. Please enable GPS and refresh the page.');
+      },
+      { timeout: 10000 }
+    );
+  }
+
+})();
+
+/* ── Form submit ──────────────────────────────────────────────────── */
+document.getElementById('attForm').onsubmit = function(e) {
+  e.preventDefault();
+  var btn = document.getElementById('btn');
+  var msg = document.getElementById('msg');
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+  btn.disabled = true;
+
+  var formData = Object.fromEntries(new FormData(this));
+  
+  // ✅ These two lines are critical — must be present
+  formData.email = sessionStorage.getItem('et_email') || '';
+  formData.location = document.getElementById('locStatus').value;
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response === "Success") {
+  document.querySelector('.card').innerHTML =
+    '<div class="success-screen">' +
+    '<div class="success-icon">✅</div>' +
+    '<h2>Attendance Marked!</h2>' +
+    '<p>Your record has been securely saved to the database.</p>' +
+    '<p style="font-size:12px;opacity:0.4;margin-top:10px;"><i class="fas fa-spinner fa-spin"></i> Signing out in 2 seconds…</p>' +
+    '</div>';
+  sessionStorage.clear();
+  setTimeout(function() {
+    google.script.run
+      .withSuccessHandler(function(url) {
+        window.location.assign(url + '?page=Login');
+      })
+      .getScriptUrl();
+  }, 2000);
+} else {
+        msg.innerHTML = "⚠️ " + response;
+        msg.style.background  = "rgba(220,38,38,0.12)";
+        msg.style.borderColor = "rgba(220,38,38,0.3)";
+        btn.innerHTML = '<i class="fas fa-check-circle"></i>  Submit Attendance';
+        btn.disabled = false;
+      }
+    })
+    .withFailureHandler(function(err) {
+      msg.innerHTML = "⚠️ Server error: " + (err.message || 'Please try again.');
+      msg.style.background  = "rgba(220,38,38,0.12)";
+      msg.style.borderColor = "rgba(220,38,38,0.3)";
+      btn.innerHTML = '<i class="fas fa-check-circle"></i>  Submit Attendance';
+      btn.disabled = false;
+    })
+    .processForm(formData);
+};</script>
+</body>
+</html>
