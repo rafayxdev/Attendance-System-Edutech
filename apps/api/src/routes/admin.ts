@@ -31,6 +31,26 @@ const bulkGenerateSchema = z.object({
   overwriteExisting: z.boolean().optional(),
 });
 
+const createUserDataSchema = z.object({
+  email: z.string().email(),
+  role: z.string().min(1),
+  fullName: z.string().min(1),
+  uniqueId: z.string().optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
+const updateUserDataSchema = z.object({
+  email: z.string().email().optional(),
+  role: z.string().min(1).optional(),
+  fullName: z.string().min(1).optional(),
+  uniqueId: z.string().optional().nullable(),
+  isActive: z.boolean().optional(),
+});
+
+const passwordUpdateSchema = z.object({
+  password: z.string().min(6),
+});
+
 const allowedRoles = new Set([
   "student",
   "internee",
@@ -283,6 +303,143 @@ adminRouter.get(
   },
 );
 
+adminRouter.post(
+  "/users-data",
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = createUserDataSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ message: "Invalid user data payload." });
+      return;
+    }
+
+    const email = parsed.data.email.trim().toLowerCase();
+    const role = normalizeKey(parsed.data.role);
+    const fullName = parsed.data.fullName.trim();
+    const uniqueId = parsed.data.uniqueId?.trim() || null;
+    const isActive = parsed.data.isActive ?? true;
+
+    if (!allowedRoles.has(role)) {
+      response.status(400).json({ message: "Role is not allowed." });
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      response.status(409).json({ message: "User already exists." });
+      return;
+    }
+
+    const placeholderPasswordHash = await bcrypt.hash(generatePassword(14), 10);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        role,
+        fullName,
+        uniqueId,
+        isActive,
+        passwordHash: placeholderPasswordHash,
+      },
+    });
+
+    response.status(201).json({
+      success: true,
+      user: {
+        email: user.email,
+        role: user.role,
+        fullName: user.fullName,
+        uniqueId: user.uniqueId ?? "N/A",
+        isActive: user.isActive,
+      },
+    });
+  },
+);
+
+adminRouter.put(
+  "/users-data/:email",
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = updateUserDataSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ message: "Invalid user data payload." });
+      return;
+    }
+
+    const currentEmail = String(request.params.email).trim().toLowerCase();
+    const existing = await prisma.user.findUnique({
+      where: { email: currentEmail },
+    });
+    if (!existing) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const nextEmail = parsed.data.email?.trim().toLowerCase() ?? currentEmail;
+    const nextRole = parsed.data.role
+      ? normalizeKey(parsed.data.role)
+      : existing.role;
+    const nextFullName = parsed.data.fullName?.trim() ?? existing.fullName;
+    const nextUniqueId =
+      parsed.data.uniqueId !== undefined
+        ? parsed.data.uniqueId?.trim() || null
+        : existing.uniqueId;
+    const nextIsActive = parsed.data.isActive ?? existing.isActive;
+
+    if (!allowedRoles.has(nextRole)) {
+      response.status(400).json({ message: "Role is not allowed." });
+      return;
+    }
+
+    if (nextEmail !== currentEmail) {
+      const duplicate = await prisma.user.findUnique({
+        where: { email: nextEmail },
+      });
+      if (duplicate) {
+        response
+          .status(409)
+          .json({ message: "Another user already uses this email." });
+        return;
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { email: currentEmail },
+      data: {
+        email: nextEmail,
+        role: nextRole,
+        fullName: nextFullName,
+        uniqueId: nextUniqueId,
+        isActive: nextIsActive,
+      },
+    });
+
+    response.json({
+      success: true,
+      user: {
+        email: updated.email,
+        role: updated.role,
+        fullName: updated.fullName,
+        uniqueId: updated.uniqueId ?? "N/A",
+        isActive: updated.isActive,
+      },
+    });
+  },
+);
+
+adminRouter.delete(
+  "/users-data/:email",
+  async (request: AuthenticatedRequest, response) => {
+    const email = String(request.params.email).trim().toLowerCase();
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (!existing) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    await prisma.user.delete({ where: { email } });
+    response.json({ success: true });
+  },
+);
+
 adminRouter.get(
   "/users-credentials",
   async (request: AuthenticatedRequest, response) => {
@@ -323,6 +480,45 @@ adminRouter.get(
       });
 
     response.json(rows);
+  },
+);
+
+adminRouter.put(
+  "/users-credentials/:email/password",
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = passwordUpdateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ message: "Invalid password payload." });
+      return;
+    }
+
+    const email = String(request.params.email).trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+    await prisma.user.update({
+      where: { email },
+      data: { passwordHash },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorEmail: request.auth?.email ?? null,
+        action: "USER_CREDENTIAL_PASSWORD_CHANGED",
+        payload: {
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          uniqueId: user.uniqueId,
+        },
+      },
+    });
+
+    response.json({ success: true });
   },
 );
 

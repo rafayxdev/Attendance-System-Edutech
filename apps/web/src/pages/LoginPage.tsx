@@ -25,6 +25,15 @@ type GuestResponse = {
   attendanceId: string;
 };
 
+const USER_LOGIN_ROLES = [
+  { value: "internee", label: "Internee" },
+  { value: "student", label: "Student" },
+  { value: "human resourse", label: "Human Resourse" },
+  { value: "chief excutive", label: "Chief Excutive" },
+  { value: "employee", label: "Employee" },
+  { value: "faculty member", label: "Faculty Member" },
+] as const;
+
 export function LoginPage({ onSessionChange }: LoginPageProps) {
   return (
     <AccessGate>
@@ -48,6 +57,7 @@ function LoginPageContent({
 }) {
   const navigate = useNavigate();
   const [role, setRole] = useState<RoleTab>("user");
+  const [selectedLoginRole, setSelectedLoginRole] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [guestName, setGuestName] = useState("");
@@ -60,6 +70,7 @@ function LoginPageContent({
     "info" | "error" | "success" | ""
   >("");
   const [busy, setBusy] = useState(false);
+  const isGuest = role === "guest";
 
   function showMessage(message: string, type: "info" | "error" | "success") {
     setStatusMessage(message);
@@ -118,6 +129,16 @@ function LoginPageContent({
   async function handleLoginSubmit(event: React.FormEvent) {
     event.preventDefault();
 
+    if (role === "user" && !selectedLoginRole) {
+      showMessage("Please select your user role.", "error");
+      return;
+    }
+
+    if (role === "admin" && selectedLoginRole !== "admin") {
+      showMessage("Please select Admin role for admin login.", "error");
+      return;
+    }
+
     setBusy(true);
     try {
       const result = await apiRequest<LoginResponse>("/auth/login", {
@@ -126,6 +147,7 @@ function LoginPageContent({
           email: email.trim().toLowerCase(),
           password,
           role: role === "admin" ? "admin" : "user",
+          selectedRole: role === "admin" ? "admin" : selectedLoginRole,
           clientIp: access.clientIp,
           latitude: access.latitude ?? undefined,
           longitude: access.longitude ?? undefined,
@@ -181,7 +203,12 @@ function LoginPageContent({
               key={tab}
               type="button"
               className={tab === role ? "role-tab active" : "role-tab"}
-              onClick={() => setRole(tab)}
+              onClick={() => {
+                setRole(tab);
+                setSelectedLoginRole(tab === "admin" ? "admin" : "");
+                setStatusMessage("");
+                setStatusType("");
+              }}
             >
               {tab === "user" ? "User" : tab === "guest" ? "Guest" : "Admin"}
             </button>
@@ -189,100 +216,136 @@ function LoginPageContent({
         </div>
 
         <form
-          onSubmit={role === "guest" ? handleGuestSubmit : handleLoginSubmit}
+          onSubmit={isGuest ? handleGuestSubmit : handleLoginSubmit}
           className="auth-form"
         >
-          {role !== "guest" ? (
-            <>
-              <label className="field-label">
-                Gmail Address
-                <input
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  type="email"
-                  placeholder="yourname@gmail.com"
-                  autoComplete="email"
-                  required
-                />
-              </label>
-              <label className="field-label">
-                Password
-                <input
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  type="password"
-                  placeholder="Enter your password"
-                  autoComplete="current-password"
-                  required
-                />
-              </label>
-            </>
-          ) : (
-            <>
-              <label className="field-label">
-                Full Name
-                <input
-                  value={guestName}
-                  onChange={(event) => setGuestName(event.target.value)}
-                  type="text"
-                  placeholder="Visitor name"
-                  required
-                />
-              </label>
-              <label className="field-label">
-                Purpose of Visit
-                <input
-                  value={guestPurpose}
-                  onChange={(event) => setGuestPurpose(event.target.value)}
-                  type="text"
-                  placeholder="Meeting, seminar, etc."
-                  required
-                />
-              </label>
-              <label className="field-label">
-                Email for Receipt
-                <input
-                  value={guestEmail}
-                  onChange={(event) => setGuestEmail(event.target.value)}
-                  type="email"
-                  placeholder="Optional"
-                />
-              </label>
-              <div className="type-panel">
-                <div className="type-label">Attendance Type</div>
-                <div className="type-row">
-                  <button
-                    type="button"
-                    className={guestType === "Time In" ? "pill active" : "pill"}
-                    onClick={() => setGuestType("Time In")}
-                  >
-                    Time In
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      guestType === "Time Out" ? "pill active" : "pill"
+          <div className="auth-form-stage" key={role}>
+            {!isGuest ? (
+              <>
+                <label className="field-label">
+                  Gmail Address
+                  <input
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    type="email"
+                    placeholder="yourname@gmail.com"
+                    autoComplete="email"
+                    required
+                  />
+                </label>
+                <label className="field-label">
+                  Password
+                  <input
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    type="password"
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </label>
+
+                <label className="field-label">
+                  {role === "admin" ? "Role" : "Select Your Role"}
+                  <select
+                    value={role === "admin" ? "admin" : selectedLoginRole}
+                    onChange={(event) =>
+                      setSelectedLoginRole(event.target.value)
                     }
-                    onClick={() => setGuestType("Time Out")}
+                    required
+                    disabled={role === "admin"}
                   >
-                    Time Out
-                  </button>
+                    {role === "admin" ? (
+                      <option value="admin">Admin</option>
+                    ) : (
+                      <>
+                        <option value="">Choose role</option>
+                        {USER_LOGIN_ROLES.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </>
+                    )}
+                  </select>
+                </label>
+
+                <div className="type-panel login-mode-panel">
+                  <div className="type-label">
+                    {role === "admin" ? "Admin Access" : "User Access"}
+                  </div>
+                  <p className="mode-note">
+                    {role === "admin"
+                      ? "Use your admin credentials to manage users, credentials, and reports."
+                      : "Use your assigned credentials to mark attendance and check status."}
+                  </p>
                 </div>
-              </div>
-              <ImageCapture value={guestImage} onChange={setGuestImage} />
-            </>
-          )}
+              </>
+            ) : (
+              <>
+                <label className="field-label">
+                  Full Name
+                  <input
+                    value={guestName}
+                    onChange={(event) => setGuestName(event.target.value)}
+                    type="text"
+                    placeholder="Visitor name"
+                    required
+                  />
+                </label>
+                <label className="field-label">
+                  Purpose of Visit
+                  <input
+                    value={guestPurpose}
+                    onChange={(event) => setGuestPurpose(event.target.value)}
+                    type="text"
+                    placeholder="Meeting, seminar, etc."
+                    required
+                  />
+                </label>
+                <label className="field-label">
+                  Email for Receipt
+                  <input
+                    value={guestEmail}
+                    onChange={(event) => setGuestEmail(event.target.value)}
+                    type="email"
+                    placeholder="Optional"
+                  />
+                </label>
+                <div className="type-panel">
+                  <div className="type-label">Attendance Type</div>
+                  <div className="type-row">
+                    <button
+                      type="button"
+                      className={
+                        guestType === "Time In" ? "pill active" : "pill"
+                      }
+                      onClick={() => setGuestType("Time In")}
+                    >
+                      Time In
+                    </button>
+                    <button
+                      type="button"
+                      className={
+                        guestType === "Time Out" ? "pill active" : "pill"
+                      }
+                      onClick={() => setGuestType("Time Out")}
+                    >
+                      Time Out
+                    </button>
+                  </div>
+                </div>
+                <ImageCapture value={guestImage} onChange={setGuestImage} />
+              </>
+            )}
+          </div>
 
           {statusMessage ? (
             <div className={`notice ${statusType}`}>{statusMessage}</div>
           ) : null}
 
           <button type="submit" className="primary-btn" disabled={busy}>
-            {busy
-              ? "Processing..."
-              : role === "guest"
-                ? "Submit Attendance"
-                : "Sign In"}
+            {busy ? "Processing..." : isGuest ? "Submit Attendance" : "Sign In"}
           </button>
         </form>
 

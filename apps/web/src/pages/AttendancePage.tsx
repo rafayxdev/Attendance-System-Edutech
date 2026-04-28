@@ -49,36 +49,62 @@ function AttendanceContent({
   onLogout: () => void;
 }) {
   const [type, setType] = useState<"Time In" | "Time Out">("Time In");
-  const [purpose, setPurpose] = useState("");
   const [location] = useState("On Campus");
   const [image, setImage] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
-  const [noticeType, setNoticeType] = useState<"success" | "error" | "">("");
+  const [noticeType, setNoticeType] = useState<
+    "success" | "error" | "info" | ""
+  >("");
   async function submitAttendance(event: React.FormEvent) {
     event.preventDefault();
+
+    if (!image) {
+      setNoticeType("error");
+      setNotice(
+        "Please capture image from camera before submitting attendance.",
+      );
+      return;
+    }
+
     setBusy(true);
     setNotice("");
     try {
-      const result = await apiRequest<{ success: boolean; message: string }>(
-        "/attendance/user",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            type,
-            purpose: purpose.trim() || "N/A",
-            location,
-            clientIp: access.clientIp,
-            latitude: access.latitude,
-            longitude: access.longitude,
-            imageDataUrl: image || null,
-          }),
-        },
-      );
+      const result = await apiRequest<{
+        success: boolean;
+        message: string;
+        email?: {
+          attempted: boolean;
+          sent: boolean;
+          provider: string | null;
+          reason: string | null;
+        };
+      }>("/attendance/user", {
+        method: "POST",
+        body: JSON.stringify({
+          type,
+          purpose: "N/A",
+          location,
+          clientIp: access.clientIp,
+          latitude: access.latitude,
+          longitude: access.longitude,
+          imageDataUrl: image || null,
+        }),
+      });
 
       if (result.success) {
-        setNoticeType("success");
-        setNotice("Attendance marked successfully. Redirecting to login...");
+        const emailSent = result.email?.sent;
+        if (emailSent) {
+          setNoticeType("success");
+          setNotice(
+            "Attendance marked and receipt email sent. Redirecting to login...",
+          );
+        } else {
+          setNoticeType("info");
+          setNotice(
+            `Attendance marked, but receipt email not sent.${result.email?.reason ? ` ${result.email.reason}` : ""} Redirecting to login...`,
+          );
+        }
         setTimeout(() => {
           onLogout();
         }, 1800);
@@ -98,20 +124,16 @@ function AttendanceContent({
   return (
     <div className="page-shell">
       <div className="page-bg" />
-      <main className="workspace-card glass-card">
+      <main className="workspace-card glass-card user-attendance-card">
         <header className="topbar">
           <div>
-            <h1>Attendance Entry</h1>
+            <h1>Digital Attendance System</h1>
             <p>Welcome back, {session.name}</p>
+            <div className="presence-chip">
+              Verified Session • Ready to mark attendance
+            </div>
           </div>
           <div className="topbar-actions">
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={() => window.location.assign("/admin")}
-            >
-              Admin
-            </button>
             <button
               type="button"
               className="ghost-btn danger"
@@ -162,17 +184,19 @@ function AttendanceContent({
             </div>
           </div>
 
-          <label className="field-label">
-            Purpose
-            <input
-              value={purpose}
-              onChange={(event) => setPurpose(event.target.value)}
-              type="text"
-              placeholder="Optional purpose or note"
-            />
-          </label>
+          <div className="location-verified-banner">
+            <span>On Campus - Location verified</span>
+          </div>
 
-          <ImageCapture value={image} onChange={setImage} />
+          <div className="capture-guide">
+            <strong>Camera Tips</strong>
+            <span>
+              Keep your face and upper body visible with proper lighting for a
+              clearer attendance record.
+            </span>
+          </div>
+
+          <ImageCapture value={image} onChange={setImage} cameraOnly required />
 
           {notice ? (
             <div className={`notice ${noticeType}`}>{notice}</div>

@@ -40,6 +40,17 @@ type UserDataRow = {
   createdAt: string;
 };
 
+type AddUserDataForm = {
+  email: string;
+  role: string;
+  fullName: string;
+  uniqueId: string;
+};
+
+type EditUserDataForm = AddUserDataForm & {
+  isActive: boolean;
+};
+
 type CredentialRow = {
   email: string;
   fullName: string;
@@ -104,56 +115,40 @@ function AdminContent({
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [sheetInput, setSheetInput] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateMessage, setGenerateMessage] = useState("");
-  const [generatedRows, setGeneratedRows] = useState<BulkUserResult[]>([]);
 
   const [usersSearch, setUsersSearch] = useState("");
   const [usersData, setUsersData] = useState<UserDataRow[]>([]);
   const [usersBusy, setUsersBusy] = useState(false);
+  const [addUserBusy, setAddUserBusy] = useState(false);
+  const [addUserMessage, setAddUserMessage] = useState("");
+  const [addUserForm, setAddUserForm] = useState<AddUserDataForm>({
+    email: "",
+    role: "",
+    fullName: "",
+    uniqueId: "",
+  });
+  const [editUserBusy, setEditUserBusy] = useState(false);
+  const [editUserMessage, setEditUserMessage] = useState("");
+  const [editingUserEmail, setEditingUserEmail] = useState<string | null>(null);
+  const [editUserForm, setEditUserForm] = useState<EditUserDataForm>({
+    email: "",
+    role: "",
+    fullName: "",
+    uniqueId: "",
+    isActive: true,
+  });
 
   const [credentialsSearch, setCredentialsSearch] = useState("");
   const [credentialsData, setCredentialsData] = useState<CredentialRow[]>([]);
   const [credentialsBusy, setCredentialsBusy] = useState(false);
-
-  function parseSheetRows(rawText: string): BulkUserRow[] {
-    const lines = rawText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (lines.length === 0) {
-      return [];
-    }
-
-    const firstCells = lines[0]!
-      .split(/\t|,/)
-      .map((cell) => cell.trim().toLowerCase());
-    const hasHeader =
-      firstCells.includes("gmail") || firstCells.includes("email");
-    const dataLines = hasHeader ? lines.slice(1) : lines;
-
-    return dataLines
-      .map((line) => {
-        const cells = line.includes("\t") ? line.split("\t") : line.split(",");
-        const [
-          email = "",
-          generated = "TRUE",
-          role = "",
-          fullName = "",
-          uniqueId = "",
-        ] = cells.map((cell) => cell.trim());
-        return {
-          email,
-          role,
-          fullName,
-          uniqueId: uniqueId || null,
-          generated: ["true", "1", "yes"].includes(generated.toLowerCase()),
-        };
-      })
-      .filter((row) => row.email && row.role && row.fullName);
-  }
+  const [selectedCredentialEmail, setSelectedCredentialEmail] = useState<
+    string | null
+  >(null);
+  const [newCredentialPassword, setNewCredentialPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
 
   async function loadOverview() {
     setBusy(true);
@@ -213,13 +208,9 @@ function AdminContent({
     }
   }
 
-  async function handleBulkGenerate() {
-    const rows = parseSheetRows(sheetInput);
+  async function generateFromRows(rows: BulkUserRow[]) {
     if (rows.length === 0) {
-      setGenerateMessage(
-        "Paste sheet rows first. Expected columns: Gmail, Generated, Role, Name, Unique ID.",
-      );
-      setGeneratedRows([]);
+      setGenerateMessage("No pending users found to generate credentials.");
       return;
     }
 
@@ -236,18 +227,168 @@ function AdminContent({
         body: JSON.stringify({ rows, overwriteExisting: true }),
       });
 
-      setGeneratedRows(result.results);
       setGenerateMessage(
-        `Processed ${result.processed} row(s). Credentials are also saved in User Credentials page.`,
+        `Processed ${result.processed} user(s). Generated users moved to User Credentials.`,
       );
       await Promise.all([loadUsersData(), loadCredentials()]);
     } catch (error) {
       setGenerateMessage(
         error instanceof Error ? error.message : "Failed to generate users.",
       );
-      setGeneratedRows([]);
     } finally {
       setGenerateBusy(false);
+    }
+  }
+
+  async function handleGeneratePendingAll() {
+    const pending = usersData
+      .filter((row) => !row.generated)
+      .map((row) => ({
+        email: row.email,
+        role: row.role,
+        fullName: row.fullName,
+        uniqueId: row.uniqueId === "N/A" ? null : row.uniqueId,
+        generated: true,
+      }));
+
+    await generateFromRows(pending);
+  }
+
+  async function handleGenerateSingle(row: UserDataRow) {
+    await generateFromRows([
+      {
+        email: row.email,
+        role: row.role,
+        fullName: row.fullName,
+        uniqueId: row.uniqueId === "N/A" ? null : row.uniqueId,
+        generated: true,
+      },
+    ]);
+  }
+
+  async function handleAddUserData(event: React.FormEvent) {
+    event.preventDefault();
+
+    setAddUserBusy(true);
+    setAddUserMessage("");
+    try {
+      await apiRequest<{ success: boolean }>("/admin/users-data", {
+        method: "POST",
+        body: JSON.stringify({
+          email: addUserForm.email.trim().toLowerCase(),
+          role: addUserForm.role.trim(),
+          fullName: addUserForm.fullName.trim(),
+          uniqueId: addUserForm.uniqueId.trim() || null,
+          isActive: true,
+        }),
+      });
+
+      setAddUserMessage(
+        "User added successfully. Credentials are pending generation.",
+      );
+      setAddUserForm({ email: "", role: "", fullName: "", uniqueId: "" });
+      await loadUsersData();
+    } catch (error) {
+      setAddUserMessage(
+        error instanceof Error ? error.message : "Failed to add user.",
+      );
+    } finally {
+      setAddUserBusy(false);
+    }
+  }
+
+  function startEditUser(row: UserDataRow) {
+    setEditingUserEmail(row.email);
+    setEditUserForm({
+      email: row.email,
+      role: row.role,
+      fullName: row.fullName,
+      uniqueId: row.uniqueId === "N/A" ? "" : row.uniqueId,
+      isActive: row.isActive,
+    });
+    setEditUserMessage("");
+  }
+
+  async function handleEditUser(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editingUserEmail) return;
+
+    setEditUserBusy(true);
+    setEditUserMessage("");
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/admin/users-data/${encodeURIComponent(editingUserEmail)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            email: editUserForm.email.trim().toLowerCase(),
+            role: editUserForm.role.trim(),
+            fullName: editUserForm.fullName.trim(),
+            uniqueId: editUserForm.uniqueId.trim() || null,
+            isActive: editUserForm.isActive,
+          }),
+        },
+      );
+
+      setEditUserMessage("User updated successfully.");
+      setEditingUserEmail(null);
+      await loadUsersData();
+    } catch (error) {
+      setEditUserMessage(
+        error instanceof Error ? error.message : "Failed to update user.",
+      );
+    } finally {
+      setEditUserBusy(false);
+    }
+  }
+
+  async function handleDeleteUser(email: string) {
+    const confirmDelete = window.confirm(
+      `Delete ${email}? This will remove the user record.`,
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/admin/users-data/${encodeURIComponent(email)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (editingUserEmail === email) {
+        setEditingUserEmail(null);
+      }
+      await loadUsersData();
+    } catch (error) {
+      setEditUserMessage(
+        error instanceof Error ? error.message : "Failed to delete user.",
+      );
+    }
+  }
+
+  async function handleChangePassword() {
+    if (!selectedCredentialEmail) return;
+
+    setPasswordBusy(true);
+    setPasswordMessage("");
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/admin/users-credentials/${encodeURIComponent(selectedCredentialEmail)}/password`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ password: newCredentialPassword }),
+        },
+      );
+      setPasswordMessage("Password updated successfully.");
+      setSelectedCredentialEmail(null);
+      setNewCredentialPassword("");
+      await loadCredentials();
+    } catch (error) {
+      setPasswordMessage(
+        error instanceof Error ? error.message : "Failed to change password.",
+      );
+    } finally {
+      setPasswordBusy(false);
     }
   }
 
@@ -258,6 +399,10 @@ function AdminContent({
   }, [view, filter, date]);
 
   const filteredCount = useMemo(() => logs.length, [logs]);
+  const pendingUsers = useMemo(
+    () => usersData.filter((row) => !row.generated),
+    [usersData],
+  );
 
   async function openImage(imagePath: string | null) {
     if (!imagePath) return;
@@ -349,7 +494,10 @@ function AdminContent({
           <button
             type="button"
             className={view === "generator" ? "role-tab active" : "role-tab"}
-            onClick={() => setView("generator")}
+            onClick={() => {
+              setView("generator");
+              void loadUsersData();
+            }}
           >
             Credentials Generation
           </button>
@@ -535,6 +683,151 @@ function AdminContent({
               <span>Gmail, Generated, Role, Name, Unique ID</span>
             </div>
             <div className="user-generator-body">
+              {editingUserEmail ? (
+                <form
+                  className="users-add-form edit-form"
+                  onSubmit={handleEditUser}
+                >
+                  <input
+                    className="search-input"
+                    placeholder="Gmail"
+                    value={editUserForm.email}
+                    onChange={(event) =>
+                      setEditUserForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                    type="email"
+                    required
+                  />
+                  <input
+                    className="search-input"
+                    placeholder="Role"
+                    value={editUserForm.role}
+                    onChange={(event) =>
+                      setEditUserForm((prev) => ({
+                        ...prev,
+                        role: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <input
+                    className="search-input"
+                    placeholder="Name"
+                    value={editUserForm.fullName}
+                    onChange={(event) =>
+                      setEditUserForm((prev) => ({
+                        ...prev,
+                        fullName: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <input
+                    className="search-input"
+                    placeholder="Unique ID"
+                    value={editUserForm.uniqueId}
+                    onChange={(event) =>
+                      setEditUserForm((prev) => ({
+                        ...prev,
+                        uniqueId: event.target.value,
+                      }))
+                    }
+                  />
+                  <label className="edit-active-toggle">
+                    <input
+                      type="checkbox"
+                      checked={editUserForm.isActive}
+                      onChange={(event) =>
+                        setEditUserForm((prev) => ({
+                          ...prev,
+                          isActive: event.target.checked,
+                        }))
+                      }
+                    />
+                    Active
+                  </label>
+                  <button
+                    type="submit"
+                    className="primary-btn slim"
+                    disabled={editUserBusy}
+                  >
+                    {editUserBusy ? "Saving..." : "Save Changes"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => setEditingUserEmail(null)}
+                  >
+                    Cancel
+                  </button>
+                </form>
+              ) : null}
+              {editUserMessage ? (
+                <div className="notice success">{editUserMessage}</div>
+              ) : null}
+              <form className="users-add-form" onSubmit={handleAddUserData}>
+                <input
+                  className="search-input"
+                  placeholder="Gmail"
+                  value={addUserForm.email}
+                  onChange={(event) =>
+                    setAddUserForm((prev) => ({
+                      ...prev,
+                      email: event.target.value,
+                    }))
+                  }
+                  type="email"
+                  required
+                />
+                <input
+                  className="search-input"
+                  placeholder="Role"
+                  value={addUserForm.role}
+                  onChange={(event) =>
+                    setAddUserForm((prev) => ({
+                      ...prev,
+                      role: event.target.value,
+                    }))
+                  }
+                  required
+                />
+                <input
+                  className="search-input"
+                  placeholder="Name"
+                  value={addUserForm.fullName}
+                  onChange={(event) =>
+                    setAddUserForm((prev) => ({
+                      ...prev,
+                      fullName: event.target.value,
+                    }))
+                  }
+                  required
+                />
+                <input
+                  className="search-input"
+                  placeholder="Unique ID"
+                  value={addUserForm.uniqueId}
+                  onChange={(event) =>
+                    setAddUserForm((prev) => ({
+                      ...prev,
+                      uniqueId: event.target.value,
+                    }))
+                  }
+                />
+                <button
+                  type="submit"
+                  className="primary-btn slim"
+                  disabled={addUserBusy}
+                >
+                  {addUserBusy ? "Adding..." : "Add User"}
+                </button>
+              </form>
+              {addUserMessage ? (
+                <div className="notice success">{addUserMessage}</div>
+              ) : null}
               <section className="filters-bar compact-filters">
                 <input
                   value={usersSearch}
@@ -561,12 +854,13 @@ function AdminContent({
                       <th>Name</th>
                       <th>Unique ID</th>
                       <th>Active</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {usersData.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="empty-row">
+                        <td colSpan={7} className="empty-row">
                           No users found.
                         </td>
                       </tr>
@@ -579,6 +873,24 @@ function AdminContent({
                           <td>{row.fullName}</td>
                           <td>{row.uniqueId}</td>
                           <td>{row.isActive ? "Yes" : "No"}</td>
+                          <td>
+                            <div className="row-actions">
+                              <button
+                                type="button"
+                                className="text-btn"
+                                onClick={() => startEditUser(row)}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="text-btn danger-text"
+                                onClick={() => void handleDeleteUser(row.email)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
                         </tr>
                       ))
                     )}
@@ -593,63 +905,68 @@ function AdminContent({
           <section className="table-card user-generator-card">
             <div className="table-head">
               <h2>User Credentials Generation</h2>
-              <span>Paste rows from EmailsUser sheet</span>
+              <span>Pending users (Generated = FALSE)</span>
             </div>
             <div className="user-generator-body">
-              <label className="field-label">
-                Sheet Rows (tab-separated or comma-separated)
-                <textarea
-                  className="sheet-input"
-                  value={sheetInput}
-                  onChange={(event) => setSheetInput(event.target.value)}
-                  placeholder={
-                    "Gmail\tGenerated\tRole\tName\tUnique ID\nuser@gmail.com\tTRUE\tStudent\tAsad Iqbal\tST-01"
-                  }
-                />
-              </label>
               <div className="topbar-actions">
                 <button
                   type="button"
                   className="primary-btn slim"
-                  onClick={() => void handleBulkGenerate()}
-                  disabled={generateBusy}
+                  onClick={() => void handleGeneratePendingAll()}
+                  disabled={generateBusy || pendingUsers.length === 0}
                 >
-                  {generateBusy
-                    ? "Generating..."
-                    : "Generate Users & Passwords"}
+                  {generateBusy ? "Generating..." : "Generate All Pending"}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => void loadUsersData()}
+                >
+                  Reload Pending
                 </button>
               </div>
-              {generateMessage ? (
-                <div className="notice success">{generateMessage}</div>
-              ) : null}
-              {generatedRows.length > 0 ? (
-                <div className="table-wrap">
-                  <table>
-                    <thead>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Gmail</th>
+                      <th>Role</th>
+                      <th>Name</th>
+                      <th>Unique ID</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingUsers.length === 0 ? (
                       <tr>
-                        <th>Email</th>
-                        <th>Name</th>
-                        <th>Role</th>
-                        <th>Unique ID</th>
-                        <th>Status</th>
-                        <th>Password</th>
+                        <td colSpan={5} className="empty-row">
+                          No pending users. All credentials are generated.
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {generatedRows.map((row, index) => (
-                        <tr key={`${row.email}-${index}`}>
+                    ) : (
+                      pendingUsers.map((row) => (
+                        <tr key={row.email}>
                           <td>{row.email}</td>
-                          <td>{row.fullName}</td>
                           <td>{row.role}</td>
-                          <td>{row.uniqueId || "N/A"}</td>
-                          <td>{row.status}</td>
-                          <td>{row.password || row.reason || "N/A"}</td>
+                          <td>{row.fullName}</td>
+                          <td>{row.uniqueId}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="primary-btn slim"
+                              onClick={() => void handleGenerateSingle(row)}
+                              disabled={generateBusy}
+                            >
+                              Generate Credentials
+                            </button>
+                          </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : null}
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         ) : null}
@@ -661,6 +978,42 @@ function AdminContent({
               <span>Generated credentials history</span>
             </div>
             <div className="user-generator-body">
+              {selectedCredentialEmail ? (
+                <div className="credential-password-panel">
+                  <label className="field-label">
+                    New Password for {selectedCredentialEmail}
+                    <input
+                      className="search-input"
+                      value={newCredentialPassword}
+                      onChange={(event) =>
+                        setNewCredentialPassword(event.target.value)
+                      }
+                      type="text"
+                      placeholder="Enter new password"
+                    />
+                  </label>
+                  <div className="topbar-actions">
+                    <button
+                      type="button"
+                      className="primary-btn slim"
+                      onClick={() => void handleChangePassword()}
+                      disabled={passwordBusy}
+                    >
+                      {passwordBusy ? "Updating..." : "Save Password"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => setSelectedCredentialEmail(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {passwordMessage ? (
+                <div className="notice success">{passwordMessage}</div>
+              ) : null}
               <section className="filters-bar compact-filters">
                 <input
                   value={credentialsSearch}
@@ -689,12 +1042,13 @@ function AdminContent({
                       <th>Status</th>
                       <th>Generated At</th>
                       <th>Generated By</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {credentialsData.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="empty-row">
+                        <td colSpan={9} className="empty-row">
                           No credentials found.
                         </td>
                       </tr>
@@ -709,6 +1063,18 @@ function AdminContent({
                           <td>{row.status}</td>
                           <td>{new Date(row.generatedAt).toLocaleString()}</td>
                           <td>{row.generatedBy}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="text-btn"
+                              onClick={() => {
+                                setSelectedCredentialEmail(row.email);
+                                setNewCredentialPassword("");
+                              }}
+                            >
+                              Change Password
+                            </button>
+                          </td>
                         </tr>
                       ))
                     )}

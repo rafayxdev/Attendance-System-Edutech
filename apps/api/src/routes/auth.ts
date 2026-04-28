@@ -11,10 +11,33 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
   role: z.enum(["user", "admin"]),
+  selectedRole: z.string().optional(),
   clientIp: z.string().optional(),
   latitude: z.number().optional(),
   longitude: z.number().optional(),
 });
+
+const userAllowedRoles = new Set([
+  "student",
+  "internee",
+  "faculty member",
+  "faculty",
+  "human resource",
+  "chief executive",
+  "employee",
+]);
+
+const roleAliases: Record<string, string> = {
+  "human resourse": "human resource",
+  "human resources": "human resource",
+  hr: "human resource",
+  "chief excutive": "chief executive",
+};
+
+function canonicalRole(value: string | null | undefined): string {
+  const normalized = normalizeKey(value);
+  return roleAliases[normalized] ?? normalized;
+}
 
 authRouter.post("/login", async (request, response) => {
   const parsed = loginSchema.safeParse(request.body);
@@ -23,7 +46,7 @@ authRouter.post("/login", async (request, response) => {
     return;
   }
 
-  const { email, password, role } = parsed.data;
+  const { email, password, role, selectedRole } = parsed.data;
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
   });
@@ -40,23 +63,28 @@ authRouter.post("/login", async (request, response) => {
     return;
   }
 
-  const userRole = normalizeKey(user.role);
+  const userRole = canonicalRole(user.role);
+  const selectedRoleKey = canonicalRole(selectedRole);
+
+  if (!selectedRoleKey) {
+    response.status(400).json({ message: "Please select a role to continue." });
+    return;
+  }
+
   if (role === "admin" && userRole !== "admin") {
     response.status(403).json({ message: "You do not have admin access." });
     return;
   }
 
+  if (role === "admin" && selectedRoleKey !== "admin") {
+    response
+      .status(400)
+      .json({ message: "Please select Admin role to sign in." });
+    return;
+  }
+
   if (role === "user") {
-    const allowed = new Set([
-      "student",
-      "internee",
-      "faculty member",
-      "faculty",
-      "human resource",
-      "chief executive",
-      "employee",
-    ]);
-    if (!allowed.has(userRole)) {
+    if (!userAllowedRoles.has(userRole)) {
       if (userRole === "admin") {
         response
           .status(403)
@@ -66,6 +94,20 @@ authRouter.post("/login", async (request, response) => {
       response
         .status(403)
         .json({ message: "Role not recognized for User login." });
+      return;
+    }
+
+    if (!userAllowedRoles.has(selectedRoleKey)) {
+      response
+        .status(400)
+        .json({ message: "Please select a valid user role." });
+      return;
+    }
+
+    if (selectedRoleKey !== userRole) {
+      response
+        .status(403)
+        .json({ message: "Selected role does not match your account role." });
       return;
     }
   }

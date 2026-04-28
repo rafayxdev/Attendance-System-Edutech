@@ -154,11 +154,9 @@ attendanceRouter.post(
     });
 
     if (duplicate) {
-      response
-        .status(409)
-        .json({
-          message: `You have already marked ${parsed.data.type} for today.`,
-        });
+      response.status(409).json({
+        message: `You have already marked ${parsed.data.type} for today.`,
+      });
       return;
     }
 
@@ -179,12 +177,10 @@ attendanceRouter.post(
       }
 
       if (!canTimeOut(user.role, now)) {
-        response
-          .status(400)
-          .json({
-            message:
-              "Early checkout is not allowed. Time Out only permitted after 2:30 PM.",
-          });
+        response.status(400).json({
+          message:
+            "Early checkout is not allowed. Time Out only permitted after 2:30 PM.",
+        });
         return;
       }
     }
@@ -203,8 +199,17 @@ attendanceRouter.post(
       imageDataUrl: parsed.data.imageDataUrl,
     });
 
-    const emailResult = user.email
-      ? await sendAttendanceEmail(
+    let emailResult: {
+      provider: string;
+      messageId?: string | null;
+      skipped: boolean;
+      reason?: string;
+    } | null = null;
+    let emailErrorMessage: string | null = null;
+
+    if (user.email) {
+      try {
+        emailResult = await sendAttendanceEmail(
           user.email,
           `Attendance Receipt - ${user.fullName}`,
           {
@@ -218,8 +223,14 @@ attendanceRouter.post(
             timestamp: now,
             imageAvailable: Boolean(record.imageData),
           },
-        )
-      : null;
+        );
+      } catch (error) {
+        emailErrorMessage =
+          error instanceof Error
+            ? error.message
+            : "Unable to send attendance receipt email.";
+      }
+    }
 
     if (emailResult && !emailResult.skipped) {
       await prisma.emailLog.create({
@@ -234,11 +245,50 @@ attendanceRouter.post(
       });
     }
 
+    if (emailResult && emailResult.skipped) {
+      await prisma.emailLog.create({
+        data: {
+          attendanceId: record.id,
+          recipientEmail: user.email,
+          subject: `Attendance Receipt - ${user.fullName}`,
+          providerName: emailResult.provider,
+          providerMessageId: null,
+          status: "skipped",
+          errorMessage: emailResult.reason ?? "Email was skipped.",
+        },
+      });
+    }
+
+    if (emailErrorMessage) {
+      await prisma.emailLog.create({
+        data: {
+          attendanceId: record.id,
+          recipientEmail: user.email,
+          subject: `Attendance Receipt - ${user.fullName}`,
+          providerName: "unknown",
+          providerMessageId: null,
+          status: "failed",
+          errorMessage: emailErrorMessage,
+        },
+      });
+    }
+
     response.json({
       success: true,
       message: "Success",
       attendanceId: record.id,
       status,
+      email: {
+        attempted: Boolean(user.email),
+        sent: Boolean(
+          emailResult && !emailResult.skipped && !emailErrorMessage,
+        ),
+        provider: emailResult?.provider ?? null,
+        reason:
+          emailErrorMessage ??
+          emailResult?.reason ??
+          (user.email ? null : "No user email available for receipt."),
+      },
     });
   },
 );
@@ -277,11 +327,9 @@ attendanceRouter.post("/guest", async (request, response) => {
   });
 
   if (duplicate) {
-    response
-      .status(409)
-      .json({
-        message: `You have already marked ${parsed.data.type} for today.`,
-      });
+    response.status(409).json({
+      message: `You have already marked ${parsed.data.type} for today.`,
+    });
     return;
   }
 
@@ -319,31 +367,74 @@ attendanceRouter.post("/guest", async (request, response) => {
     imageDataUrl: parsed.data.imageDataUrl,
   });
 
-  if (guestEmail) {
-    const emailResult = await sendAttendanceEmail(
-      guestEmail,
-      `Attendance Receipt - ${guestName}`,
-      {
-        name: guestName,
-        type: parsed.data.type,
-        location: parsed.data.location,
-        status: "On Time",
-        category: "Guest",
-        purpose: parsed.data.purpose ?? "N/A",
-        timestamp: now,
-        imageAvailable: Boolean(record.imageData),
-      },
-    );
+  let guestEmailResult: {
+    provider: string;
+    messageId?: string | null;
+    skipped: boolean;
+    reason?: string;
+  } | null = null;
+  let guestEmailErrorMessage: string | null = null;
 
-    if (!emailResult.skipped) {
+  if (guestEmail) {
+    try {
+      guestEmailResult = await sendAttendanceEmail(
+        guestEmail,
+        `Attendance Receipt - ${guestName}`,
+        {
+          name: guestName,
+          type: parsed.data.type,
+          location: parsed.data.location,
+          status: "On Time",
+          category: "Guest",
+          purpose: parsed.data.purpose ?? "N/A",
+          timestamp: now,
+          imageAvailable: Boolean(record.imageData),
+        },
+      );
+    } catch (error) {
+      guestEmailErrorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unable to send attendance receipt email.";
+    }
+
+    if (guestEmailResult && !guestEmailResult.skipped) {
       await prisma.emailLog.create({
         data: {
           attendanceId: record.id,
           recipientEmail: guestEmail,
           subject: `Attendance Receipt - ${guestName}`,
-          providerName: emailResult.provider,
-          providerMessageId: emailResult.messageId ?? null,
+          providerName: guestEmailResult.provider,
+          providerMessageId: guestEmailResult.messageId ?? null,
           status: "sent",
+        },
+      });
+    }
+
+    if (guestEmailResult && guestEmailResult.skipped) {
+      await prisma.emailLog.create({
+        data: {
+          attendanceId: record.id,
+          recipientEmail: guestEmail,
+          subject: `Attendance Receipt - ${guestName}`,
+          providerName: guestEmailResult.provider,
+          providerMessageId: null,
+          status: "skipped",
+          errorMessage: guestEmailResult.reason ?? "Email was skipped.",
+        },
+      });
+    }
+
+    if (guestEmailErrorMessage) {
+      await prisma.emailLog.create({
+        data: {
+          attendanceId: record.id,
+          recipientEmail: guestEmail,
+          subject: `Attendance Receipt - ${guestName}`,
+          providerName: "unknown",
+          providerMessageId: null,
+          status: "failed",
+          errorMessage: guestEmailErrorMessage,
         },
       });
     }
@@ -354,5 +445,18 @@ attendanceRouter.post("/guest", async (request, response) => {
     message: "Success",
     attendanceId: record.id,
     status: "On Time",
+    email: {
+      attempted: Boolean(guestEmail),
+      sent: Boolean(
+        guestEmailResult &&
+        !guestEmailResult.skipped &&
+        !guestEmailErrorMessage,
+      ),
+      provider: guestEmailResult?.provider ?? null,
+      reason:
+        guestEmailErrorMessage ??
+        guestEmailResult?.reason ??
+        (guestEmail ? null : "Guest email not provided."),
+    },
   });
 });

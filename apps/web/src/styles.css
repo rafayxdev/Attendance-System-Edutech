@@ -126,6 +126,22 @@ button {
   animation: pop 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.user-attendance-card {
+  width: min(100%, 760px);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(11, 19, 48, 0.86),
+      rgba(26, 35, 76, 0.8) 52%,
+      rgba(10, 27, 57, 0.84)
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(56, 189, 248, 0.18),
+      transparent 42%
+    );
+}
+
 .brand-block {
   display: flex;
   gap: 16px;
@@ -155,6 +171,21 @@ button {
 .topbar p {
   margin: 4px 0 0;
   color: var(--muted);
+}
+
+.presence-chip {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.12);
+  color: #d7f5ff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .role-tabs,
@@ -212,6 +243,28 @@ button {
   gap: 14px;
 }
 
+.auth-form {
+  min-height: 440px;
+  align-content: start;
+}
+
+.auth-form-stage {
+  display: grid;
+  gap: 14px;
+  animation: fadeSlide 0.28s ease both;
+}
+
+.login-mode-panel {
+  min-height: 96px;
+}
+
+.mode-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .field-label {
   display: grid;
   gap: 8px;
@@ -222,6 +275,7 @@ button {
 }
 
 .field-label input,
+.field-label select,
 .search-input,
 .date-input {
   width: 100%;
@@ -231,6 +285,28 @@ button {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   outline: none;
+}
+
+.field-label select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.78) 50%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.78) 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) calc(50% + 2px),
+    calc(100% - 12px) calc(50% + 2px);
+  background-size:
+    6px 6px,
+    6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 38px;
+  color-scheme: dark;
+}
+
+.field-label select option {
+  background-color: #1a2444;
+  color: #eef6ff;
 }
 
 .field-label textarea {
@@ -246,11 +322,17 @@ button {
 }
 
 .field-label input:focus,
+.field-label select:focus,
 .field-label textarea:focus,
 .search-input:focus,
 .date-input:focus {
   border-color: rgba(56, 189, 248, 0.45);
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.12);
+}
+
+.field-label select:disabled {
+  opacity: 0.82;
+  cursor: not-allowed;
 }
 
 .user-generator-card {
@@ -271,6 +353,47 @@ button {
   font-family: "DM Sans", sans-serif;
 }
 
+.users-add-form {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr 0.8fr auto;
+  gap: 10px;
+}
+
+.edit-form {
+  grid-template-columns: 1.2fr 1fr 1fr 0.8fr auto auto auto;
+  align-items: center;
+}
+
+.edit-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.row-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.danger-text {
+  color: #ff9a9a;
+}
+
+.credential-password-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+}
+
 .compact-filters {
   grid-template-columns: 1fr auto;
   margin-bottom: 0;
@@ -285,14 +408,43 @@ button {
 .metric-card,
 .table-card,
 .filters-bar {
-  background: rgba(255, 255, 255, 0.05);
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.07),
+    rgba(255, 255, 255, 0.03)
+  );
   border: 1px solid var(--border);
   border-radius: 18px;
 }
 
 .type-panel,
 .image-capture {
-  padding: 14px;
+  padding: 15px;
+}
+
+.capture-guide {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  background: linear-gradient(
+    160deg,
+    rgba(56, 189, 248, 0.12),
+    rgba(99, 102, 241, 0.08)
+  );
+}
+
+.capture-guide strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.capture-guide span {
+  color: #d3e8ff;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .type-label,
@@ -369,6 +521,11 @@ button {
   border: 1px solid rgba(34, 197, 94, 0.25);
 }
 
+.notice.info {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
 .notice.error {
   background: rgba(239, 68, 68, 0.12);
   border: 1px solid rgba(239, 68, 68, 0.25);
@@ -392,12 +549,60 @@ button {
   min-height: 180px;
   border-radius: 16px;
   border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.03),
+    rgba(255, 255, 255, 0.01)
+  );
   display: grid;
   place-items: center;
   text-align: center;
   padding: 16px;
   cursor: pointer;
   overflow: hidden;
+}
+
+.camera-only-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.camera-preview {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  max-height: 340px;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #030712;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 16px 32px rgba(2, 6, 23, 0.45);
+}
+
+.camera-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.form-error {
+  color: #ff9a9a;
+  font-size: 13px;
+}
+
+.location-verified-banner {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 197, 94, 0.32);
+  background: linear-gradient(
+    180deg,
+    rgba(16, 185, 129, 0.2),
+    rgba(5, 150, 105, 0.18)
+  );
+  color: #d1fae5;
+  font-weight: 600;
 }
 
 .image-dropzone img {
@@ -418,6 +623,7 @@ button {
 .profile-card,
 .metric-card {
   padding: 16px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .profile-card span,
@@ -646,10 +852,29 @@ td code {
   }
 }
 
+@keyframes fadeSlide {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 960px) {
   .profile-grid,
   .stats-grid,
   .filters-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .users-add-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .edit-form {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -685,5 +910,22 @@ td code {
 
   .topbar-actions > * {
     flex: 1;
+  }
+
+  .users-add-form {
+    grid-template-columns: 1fr;
+  }
+
+  .edit-form {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-form {
+    min-height: 400px;
+  }
+
+  .presence-chip {
+    width: 100%;
+    justify-content: center;
   }
 }

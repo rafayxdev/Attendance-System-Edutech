@@ -1,6 +1,14 @@
 import { config as loadEnv } from "dotenv";
+import { resolve } from "node:path";
 
-loadEnv();
+for (const envPath of [
+  resolve(process.cwd(), "apps/api/.env"),
+  resolve(process.cwd(), ".env"),
+  resolve(process.cwd(), "../.env"),
+  resolve(process.cwd(), "../../.env"),
+]) {
+  loadEnv({ path: envPath, override: true });
+}
 
 function toBool(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value === "") return fallback;
@@ -42,9 +50,10 @@ export const env = {
   demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD ?? "Admin@12345",
   demoUserEmail: process.env.DEMO_USER_EMAIL ?? "staff@edutech.com",
   demoUserPassword: process.env.DEMO_USER_PASSWORD ?? "Staff@12345",
-  resendApiKey: process.env.RESEND_API_KEY ?? "",
-  resendFrom:
-    process.env.RESEND_FROM ?? "EduTech Solutions <no-reply@edutech.com>",
+  gmailUser: (process.env.GMAIL_USER ?? "").trim(),
+  gmailAppPassword: (process.env.GMAIL_APP_PASSWORD ?? "").trim(),
+  emailFrom:
+    process.env.EMAIL_FROM ?? "EduTech Interns <edutechinterns@gmail.com>",
   appPublicUrl: process.env.APP_PUBLIC_URL ?? "http://localhost:5173",
   apiPublicUrl: process.env.API_PUBLIC_URL ?? "http://localhost:4000",
 };

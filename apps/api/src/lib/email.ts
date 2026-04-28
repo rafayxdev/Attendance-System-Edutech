@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { formatDisplayDateTime } from "./rules.js";
+import nodemailer, { type Transporter } from "nodemailer";
 
 interface EmailReceiptInput {
   name: string;
@@ -47,44 +48,73 @@ function buildEmailHtml(input: EmailReceiptInput): string {
 </html>`;
 }
 
+let gmailTransporter: Transporter | null = null;
+
+function getGmailTransporter(): Transporter {
+  if (gmailTransporter) {
+    return gmailTransporter;
+  }
+
+  const smtpUser = env.gmailUser.trim();
+  const smtpPass = env.gmailAppPassword.replace(/\s+/g, "").trim();
+
+  gmailTransporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  });
+
+  return gmailTransporter;
+}
+
 export async function sendAttendanceEmail(
   recipientEmail: string,
   subject: string,
   input: EmailReceiptInput,
-): Promise<{ provider: string; messageId?: string | null; skipped: boolean }> {
-  if (!recipientEmail) {
-    return { provider: "none", skipped: true };
+): Promise<{
+  provider: string;
+  messageId?: string | null;
+  skipped: boolean;
+  reason?: string;
+}> {
+  if (!recipientEmail?.trim()) {
+    return {
+      provider: "none",
+      skipped: true,
+      reason: "Recipient email is empty.",
+    };
   }
 
   const html = buildEmailHtml(input);
 
-  if (env.resendApiKey) {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.resendApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: env.resendFrom,
-        to: [recipientEmail],
-        subject,
-        html,
-      }),
+  const hasGmailConfig = Boolean(
+    env.gmailUser.trim() && env.gmailAppPassword.replace(/\s+/g, "").trim(),
+  );
+
+  if (hasGmailConfig) {
+    const transporter = getGmailTransporter();
+    const info = await transporter.sendMail({
+      from: env.emailFrom,
+      to: recipientEmail,
+      subject,
+      html,
     });
 
-    if (!response.ok) {
-      const message = await response.text();
-      throw new Error(`Email provider rejected request: ${message}`);
-    }
-
-    const data = (await response.json()) as { id?: string };
-    return { provider: "resend", messageId: data.id ?? null, skipped: false };
+    return {
+      provider: "nodemailer",
+      messageId: info.messageId ?? null,
+      skipped: false,
+    };
   }
 
-  console.info("Email skipped because RESEND_API_KEY is not set.", {
-    recipientEmail,
-    subject,
-  });
-  return { provider: "console", skipped: true };
+  return {
+    provider: "nodemailer",
+    skipped: true,
+    reason:
+      "SMTP credentials not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env",
+  };
 }
