@@ -5,7 +5,6 @@ import { requireAuth, type AuthenticatedRequest } from "../lib/auth.js";
 import {
   allowedPrefixMatch,
   calculateDistanceMeters,
-  canTimeOut,
   formatDayKey,
   getLateStatus,
   imageBufferFromDataUrl,
@@ -163,6 +162,57 @@ function evaluateScheduleWindow(
   return { allowed: true, status: "On Time", message: null };
 }
 
+function evaluateDaySchedule(
+  params: {
+    schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
+    now: Date;
+  },
+): {
+  dayOk: boolean;
+  todaySlot: { day: ScheduleDay; startTime: string; endTime: string } | null;
+  nowMinutes: number;
+  startMinutes: number | null;
+  endMinutes: number | null;
+  messageIfInvalid: string | null;
+} {
+  const weekday = getWeekdayKey(params.now, env.appTimezone);
+  if (!["mon", "tue", "wed", "thu", "fri"].includes(weekday)) {
+    return {
+      dayOk: false,
+      todaySlot: null,
+      nowMinutes: toMinutes(hhmmFromDate(params.now, env.appTimezone)),
+      startMinutes: null,
+      endMinutes: null,
+      messageIfInvalid: "Attendance is only available Monday to Friday.",
+    };
+  }
+
+  const todaySlot = params.schedule.find((row) => row.day === weekday) ?? null;
+  if (!todaySlot) {
+    return {
+      dayOk: false,
+      todaySlot: null,
+      nowMinutes: toMinutes(hhmmFromDate(params.now, env.appTimezone)),
+      startMinutes: null,
+      endMinutes: null,
+      messageIfInvalid:
+        "Attendance is not configured for today. Please contact admin.",
+    };
+  }
+
+  const nowMinutes = toMinutes(hhmmFromDate(params.now, env.appTimezone));
+  const startMinutes = toMinutes(todaySlot.startTime);
+  const endMinutes = toMinutes(todaySlot.endTime);
+  return {
+    dayOk: true,
+    todaySlot,
+    nowMinutes,
+    startMinutes,
+    endMinutes,
+    messageIfInvalid: null,
+  };
+}
+
 const attendanceSchema = z.object({
   type: z.enum(["Time In", "Time Out"]),
   purpose: z.string().optional().nullable(),
@@ -293,18 +343,24 @@ attendanceRouter.post(
     const dayKey = formatDayKey(now);
     const schedule = await getUserScheduleByEmail(user.email);
     let scheduleStatus: "On Time" | "Late" | null = null;
-    if (schedule.length > 0) {
-      const window = evaluateScheduleWindow({
-        schedule,
-        type: parsed.data.type,
-        now,
+    if (schedule.length === 0) {
+      response.status(400).json({
+        message:
+          "Your attendance schedule is not configured. Please contact admin.",
       });
-      if (!window.allowed) {
-        response.status(400).json({ message: window.message ?? "Not allowed." });
-        return;
-      }
-      scheduleStatus = window.status;
+      return;
     }
+
+    const window = evaluateScheduleWindow({
+      schedule,
+      type: parsed.data.type,
+      now,
+    });
+    if (!window.allowed) {
+      response.status(400).json({ message: window.message ?? "Not allowed." });
+      return;
+    }
+    scheduleStatus = window.status;
 
     const duplicate = await prisma.attendanceLog.findFirst({
       where: {
@@ -334,14 +390,6 @@ attendanceRouter.post(
         response
           .status(400)
           .json({ message: "You must mark Time In before Time Out." });
-        return;
-      }
-
-      if (!canTimeOut(user.role, now)) {
-        response.status(400).json({
-          message:
-            "Early checkout is not allowed. Time Out only permitted after 2:30 PM.",
-        });
         return;
       }
     }
@@ -465,30 +513,131 @@ attendanceRouter.get(
       return;
     }
 
+    const selectedTypeRaw = String(request.query.type ?? "").trim();
     const selectedType =
-      String(request.query.type ?? "Time In") === "Time Out"
-        ? "Time Out"
-        : "Time In";
+      selectedTypeRaw === "Time Out" || selectedTypeRaw === "Time In"
+        ? (selectedTypeRaw as "Time In" | "Time Out")
+        : null;
     const user = await prisma.user.findUnique({ where: { id: auth.sub } });
     if (!user) {
       response.status(404).json({ message: "User not found." });
       return;
     }
 
+    const now = new Date();
+    const dayKey = formatDayKey(now);
+    const logs = await prisma.attendanceLog.findMany({
+      where: { userId: user.id, attendanceDay: dayKey },
+      select: { attendanceType: true },
+    });
+    const hasTimeIn = logs.some((log) => log.attendanceType === "Time In");
+    const hasTimeOut = logs.some((log) => log.attendanceType === "Time Out");
+
     const schedule = await getUserScheduleByEmail(user.email);
     if (schedule.length === 0) {
-      response.json({ allowed: true, message: null });
+      response.json({
+        recommendedType: "Time In",
+        allowed: false,
+        message:
+          "Your attendance schedule is not configured. Please contact admin.",
+        done: hasTimeIn && hasTimeOut,
+        allowedByType: {
+          "Time In": false,
+          "Time Out": false,
+        },
+        messageByType: {
+          "Time In":
+            "Your attendance schedule is not configured. Please contact admin.",
+          "Time Out":
+            "Your attendance schedule is not configured. Please contact admin.",
+        },
+      });
       return;
     }
 
-    const window = evaluateScheduleWindow({
+    const evalDay = evaluateDaySchedule({ schedule, now });
+    if (!evalDay.dayOk || !evalDay.todaySlot || evalDay.startMinutes === null) {
+      response.json({
+        recommendedType: "Time In",
+        allowed: false,
+        message: evalDay.messageIfInvalid,
+        done: hasTimeIn && hasTimeOut,
+        allowedByType: { "Time In": false, "Time Out": false },
+        messageByType: {
+          "Time In": evalDay.messageIfInvalid,
+          "Time Out": evalDay.messageIfInvalid,
+        },
+      });
+      return;
+    }
+
+    const start = evalDay.startMinutes;
+    const end = evalDay.endMinutes ?? start;
+    const nowMin = evalDay.nowMinutes;
+
+    const timeInWindow = evaluateScheduleWindow({ schedule, type: "Time In", now });
+    const timeOutWindow = evaluateScheduleWindow({
       schedule,
-      type: selectedType,
-      now: new Date(),
+      type: "Time Out",
+      now,
     });
+
+    // Time Out additionally requires Time In to exist.
+    const timeOutAllowed = timeOutWindow.allowed && hasTimeIn && !hasTimeOut;
+    const timeOutMessage =
+      !hasTimeIn && nowMin >= end
+        ? "You must mark Time In first. Time In window may have ended."
+        : hasTimeOut
+          ? "Time Out already marked for today."
+          : timeOutWindow.message;
+
+    const timeInAllowed = timeInWindow.allowed && !hasTimeIn;
+    const timeInMessage = hasTimeIn
+      ? "Time In already marked for today."
+      : timeInWindow.message;
+
+    let recommendedType: "Time In" | "Time Out" = "Time In";
+    let allowed = false;
+    let message: string | null = null;
+
+    if (hasTimeIn && hasTimeOut) {
+      recommendedType = "Time Out";
+      allowed = false;
+      message = "Attendance already completed for today.";
+    } else if (!hasTimeIn) {
+      recommendedType = "Time In";
+      allowed = timeInAllowed;
+      if (nowMin < start) {
+        message = `Your Time In will start at ${evalDay.todaySlot.startTime}.`;
+      } else if (nowMin > end) {
+        message = `Your Time In time is gone (closed at ${evalDay.todaySlot.endTime}).`;
+      } else {
+        message = timeInMessage;
+      }
+    } else {
+      // has time in, can time out if within window
+      recommendedType = "Time Out";
+      allowed = timeOutAllowed;
+      if (nowMin < end) {
+        message = `Your Time Out is after ${evalDay.todaySlot.endTime}.`;
+      } else if (nowMin > end + 60) {
+        message = `Your Time Out time is gone (closed 1 hour after ${evalDay.todaySlot.endTime}).`;
+      } else {
+        message = timeOutMessage;
+      }
+    }
+
+    const effectiveType = selectedType ?? recommendedType;
+    const effectiveAllowed = effectiveType === "Time In" ? timeInAllowed : timeOutAllowed;
+    const effectiveMessage = effectiveType === "Time In" ? timeInMessage : timeOutMessage;
+
     response.json({
-      allowed: window.allowed,
-      message: window.message,
+      recommendedType,
+      allowed: effectiveAllowed,
+      message: effectiveMessage ?? message,
+      done: hasTimeIn && hasTimeOut,
+      allowedByType: { "Time In": timeInAllowed, "Time Out": timeOutAllowed },
+      messageByType: { "Time In": timeInMessage, "Time Out": timeOutMessage },
     });
   },
 );

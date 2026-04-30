@@ -5,6 +5,7 @@ import { clearSession, readSession } from "../auth/session";
 import { AccessGate } from "../components/AccessGate";
 import { ImageCapture } from "../components/ImageCapture";
 import type { AuthSession, AccessPolicy } from "../types";
+import logoUrl from "../images/EduTech Logo.png";
 
 interface AttendancePageProps {
   onSessionChange: (session: AuthSession | null) => void;
@@ -56,12 +57,20 @@ function AttendanceContent({
   const [noticeType, setNoticeType] = useState<
     "success" | "error" | "info" | ""
   >("");
+  const [submitStatus, setSubmitStatus] = useState<
+    "Late" | "On Time" | "Checked out" | ""
+  >("");
   const [cameraAllowed, setCameraAllowed] = useState(true);
   const [windowMessage, setWindowMessage] = useState("");
+  const [autoMessage, setAutoMessage] = useState("");
 
   async function loadWindow(selectedType: "Time In" | "Time Out") {
     try {
-      const result = await apiRequest<{ allowed: boolean; message: string | null }>(
+      const result = await apiRequest<{
+        recommendedType?: "Time In" | "Time Out";
+        allowed: boolean;
+        message: string | null;
+      }>(
         `/attendance/user-window?type=${encodeURIComponent(selectedType)}`,
       );
       setCameraAllowed(result.allowed);
@@ -75,8 +84,26 @@ function AttendanceContent({
     }
   }
 
+  async function loadAutoType() {
+    try {
+      const result = await apiRequest<{
+        recommendedType: "Time In" | "Time Out";
+        allowed: boolean;
+        message: string | null;
+      }>(`/attendance/user-window`);
+      setType(result.recommendedType);
+      setCameraAllowed(result.allowed);
+      const msg = result.message ?? "";
+      setWindowMessage(msg);
+      setAutoMessage(msg);
+      if (!result.allowed) setImage("");
+    } catch {
+      setAutoMessage("");
+    }
+  }
+
   useEffect(() => {
-    void loadWindow("Time In");
+    void loadAutoType();
   }, []);
   async function submitAttendance(event: React.FormEvent) {
     event.preventDefault();
@@ -97,10 +124,12 @@ function AttendanceContent({
 
     setBusy(true);
     setNotice("");
+    setSubmitStatus("");
     try {
       const result = await apiRequest<{
         success: boolean;
         message: string;
+        status: "Late" | "On Time";
         email?: {
           attempted: boolean;
           sent: boolean;
@@ -121,21 +150,24 @@ function AttendanceContent({
       });
 
       if (result.success) {
+        const derivedStatus =
+          type === "Time Out" ? "Checked out" : result.status;
+        setSubmitStatus(derivedStatus);
         const emailSent = result.email?.sent;
         if (emailSent) {
           setNoticeType("success");
           setNotice(
-            "Attendance marked and receipt email sent. Redirecting to login...",
+            `Attendance submitted successfully. (${type} • ${derivedStatus}) Receipt email sent. Redirecting to login...`,
           );
         } else {
           setNoticeType("info");
           setNotice(
-            `Attendance marked, but receipt email not sent.${result.email?.reason ? ` ${result.email.reason}` : ""} Redirecting to login...`,
+            `Attendance submitted successfully. (${type} • ${derivedStatus}) Receipt email not sent.${result.email?.reason ? ` ${result.email.reason}` : ""} Redirecting to login...`,
           );
         }
         setTimeout(() => {
           onLogout();
-        }, 1800);
+        }, 2400);
       }
     } catch (error) {
       setNoticeType("error");
@@ -155,8 +187,13 @@ function AttendanceContent({
       <main className="workspace-card glass-card user-attendance-card">
         <header className="topbar attendance-topbar">
           <div>
+            <div className="attendance-brand">
+              <img src={logoUrl} alt="EduTech Solutions" />
+              <div>
             <h1>Digital Attendance System</h1>
             <p>Welcome back, {session.name}</p>
+              </div>
+            </div>
           </div>
           <div className="topbar-actions attendance-actions">
             <button
@@ -192,26 +229,22 @@ function AttendanceContent({
           <div className="type-panel">
             <div className="type-label">Attendance Type</div>
             <div className="type-row">
-              <button
-                type="button"
-                className={type === "Time In" ? "pill active" : "pill"}
-                onClick={() => {
-                  setType("Time In");
-                  void loadWindow("Time In");
-                }}
-              >
-                Time In
-              </button>
-              <button
-                type="button"
-                className={type === "Time Out" ? "pill active" : "pill"}
-                onClick={() => {
-                  setType("Time Out");
-                  void loadWindow("Time Out");
-                }}
-              >
-                Time Out
-              </button>
+              <div className="pill active" role="status" aria-live="polite">
+                {type}
+              </div>
+              {submitStatus ? (
+                <div
+                  className={
+                    submitStatus === "Late"
+                      ? "badge red"
+                      : submitStatus === "Checked out"
+                        ? "badge indigo"
+                        : "badge green"
+                  }
+                >
+                  {submitStatus}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -219,19 +252,22 @@ function AttendanceContent({
             <span>On Campus - Location verified</span>
           </div>
 
-          <div className="capture-guide">
-            <strong>Camera Tips</strong>
-            <span>
-              Keep your face and upper body visible with proper lighting for a
-              clearer attendance record.
-            </span>
-          </div>
+          {cameraAllowed ? (
+            <div className="capture-guide">
+              <strong>Camera Tips</strong>
+              <span>
+                Keep your face and upper body visible with proper lighting for a
+                clearer attendance record.
+              </span>
+            </div>
+          ) : null}
 
           {cameraAllowed ? (
             <ImageCapture value={image} onChange={setImage} cameraOnly required />
           ) : (
             <div className="notice info">
-              {windowMessage ||
+              {autoMessage ||
+                windowMessage ||
                 "You cannot capture image right now due to attendance time window."}
             </div>
           )}

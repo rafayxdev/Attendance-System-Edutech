@@ -98,6 +98,22 @@ type SchedulePayload = {
   schedule: Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>;
 };
 
+function weekdayKey(
+  date: Date,
+  timeZone: string,
+): "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun" {
+  const label = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone })
+    .format(date)
+    .toLowerCase();
+  if (label.startsWith("mon")) return "mon";
+  if (label.startsWith("tue")) return "tue";
+  if (label.startsWith("wed")) return "wed";
+  if (label.startsWith("thu")) return "thu";
+  if (label.startsWith("fri")) return "fri";
+  if (label.startsWith("sat")) return "sat";
+  return "sun";
+}
+
 function parseCredentialPayload(payload: unknown): CredentialPayload | null {
   if (!payload || typeof payload !== "object") return null;
 
@@ -613,6 +629,106 @@ adminRouter.get(
           row.uniqueId.toLowerCase().includes(search)
         );
       });
+
+    response.json(rows);
+  },
+);
+
+adminRouter.get(
+  "/shifts-today",
+  async (request: AuthenticatedRequest, response) => {
+    const search = (request.query.search as string | undefined)?.trim() ?? "";
+    const now = new Date();
+    const todayKey = formatDayKey(now);
+    const tz = "Asia/Karachi";
+    const todayWeekday = weekdayKey(now, tz);
+
+    const users = await prisma.user.findMany({
+      where: search
+        ? {
+            OR: [
+              { email: { contains: search, mode: "insensitive" } },
+              { role: { contains: search, mode: "insensitive" } },
+              { fullName: { contains: search, mode: "insensitive" } },
+              { uniqueId: { contains: search, mode: "insensitive" } },
+            ],
+          }
+        : undefined,
+      orderBy: { createdAt: "desc" },
+      take: 1000,
+    });
+
+    const scheduleLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+    const scheduleByEmail = new Map<
+      string,
+      Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>
+    >();
+    for (const log of scheduleLogs) {
+      const payload = parseSchedulePayload(log.payload);
+      if (!payload) continue;
+      const key = payload.email.toLowerCase();
+      if (!scheduleByEmail.has(key)) {
+        scheduleByEmail.set(key, payload.schedule);
+      }
+    }
+
+    const todaysLogs = await prisma.attendanceLog.findMany({
+      where: { attendanceDay: todayKey, userId: { not: null } },
+      select: {
+        userId: true,
+        attendanceType: true,
+        status: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const timeInByUserId = new Map<string, Date>();
+    const timeOutByUserId = new Map<string, Date>();
+    const statusByUserId = new Map<string, string>();
+    for (const log of todaysLogs) {
+      if (!log.userId) continue;
+      if (log.attendanceType === "Time In" && !timeInByUserId.has(log.userId)) {
+        timeInByUserId.set(log.userId, log.createdAt);
+        statusByUserId.set(log.userId, log.status);
+      }
+      if (
+        log.attendanceType === "Time Out" &&
+        !timeOutByUserId.has(log.userId)
+      ) {
+        timeOutByUserId.set(log.userId, log.createdAt);
+      }
+    }
+
+    const rows = users.map((user) => {
+      const schedule = scheduleByEmail.get(user.email.toLowerCase()) ?? [];
+      const todaySlot =
+        todayWeekday === "sat" || todayWeekday === "sun"
+          ? null
+          : schedule.find((s) => s.day === todayWeekday) ?? null;
+      const timeIn = timeInByUserId.get(user.id) ?? null;
+      const timeOut = timeOutByUserId.get(user.id) ?? null;
+      const timeInStatus = statusByUserId.get(user.id) ?? null;
+
+      let attendanceStatus: string = "Not marked";
+      if (timeIn && !timeOut) attendanceStatus = timeInStatus ?? "Time In";
+      if (timeIn && timeOut) attendanceStatus = "Checked out";
+
+      return {
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        uniqueId: user.uniqueId ?? "N/A",
+        shiftStart: todaySlot?.startTime ?? "N/A",
+        shiftEnd: todaySlot?.endTime ?? "N/A",
+        timeInAt: timeIn ? formatDisplayDateTime(timeIn).time : "—",
+        timeOutAt: timeOut ? formatDisplayDateTime(timeOut).time : "—",
+        status: attendanceStatus,
+      };
+    });
 
     response.json(rows);
   },

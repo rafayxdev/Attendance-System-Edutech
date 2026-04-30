@@ -10,7 +10,7 @@ interface AdminPageProps {
   onSessionChange: (session: AuthSession | null) => void;
 }
 
-type AdminView = "overview" | "users" | "generator" | "credentials";
+type AdminView = "overview" | "users" | "generator" | "credentials" | "shifts";
 type WeekdayKey = "mon" | "tue" | "wed" | "thu" | "fri";
 type WeekdaySchedule = {
   day: WeekdayKey;
@@ -90,6 +90,18 @@ type CredentialRow = {
   status: "created" | "updated";
   generatedAt: string;
   generatedBy: string;
+};
+
+type ShiftRow = {
+  email: string;
+  fullName: string;
+  role: string;
+  uniqueId: string;
+  shiftStart: string;
+  shiftEnd: string;
+  timeInAt: string;
+  timeOutAt: string;
+  status: string;
 };
 
 export function AdminPage({ onSessionChange }: AdminPageProps) {
@@ -186,6 +198,26 @@ function AdminContent({
   const [newCredentialPassword, setNewCredentialPassword] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
+
+  const [shiftsSearch, setShiftsSearch] = useState("");
+  const [shiftsData, setShiftsData] = useState<ShiftRow[]>([]);
+  const [shiftsBusy, setShiftsBusy] = useState(false);
+
+  async function loadShifts() {
+    setShiftsBusy(true);
+    try {
+      const query = new URLSearchParams();
+      if (shiftsSearch.trim()) query.set("search", shiftsSearch.trim());
+      const rows = await apiRequest<ShiftRow[]>(
+        `/admin/shifts-today?${query.toString()}`,
+      );
+      setShiftsData(rows);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setShiftsBusy(false);
+    }
+  }
 
   async function loadOverview() {
     setBusy(true);
@@ -641,6 +673,16 @@ function AdminContent({
             }}
           >
             User Credentials
+          </button>
+          <button
+            type="button"
+            className={view === "shifts" ? "role-tab active" : "role-tab"}
+            onClick={() => {
+              setView("shifts");
+              void loadShifts();
+            }}
+          >
+            Timing / Shift
           </button>
         </section>
 
@@ -1373,6 +1415,90 @@ function AdminContent({
                                 Delete
                               </button>
                             </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "shifts" ? (
+          <section className="table-card user-generator-card">
+            <div className="table-head">
+              <h2>Timing / Shift (Today)</h2>
+              <span>Schedule + marked attendance</span>
+            </div>
+            <div className="user-generator-body">
+              <section className="filters-bar compact-filters">
+                <input
+                  value={shiftsSearch}
+                  onChange={(event) => setShiftsSearch(event.target.value)}
+                  placeholder="Search users by name, role, id, email"
+                  className="search-input"
+                />
+                <button
+                  type="button"
+                  className="primary-btn slim"
+                  onClick={() => void loadShifts()}
+                  disabled={shiftsBusy}
+                >
+                  Search
+                </button>
+              </section>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Role</th>
+                      <th>Gmail</th>
+                      <th>Unique ID</th>
+                      <th>Shift In</th>
+                      <th>Shift Out</th>
+                      <th>Time In</th>
+                      <th>Time Out</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shiftsData.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="empty-row">
+                          No shift records found.
+                        </td>
+                      </tr>
+                    ) : (
+                      shiftsData.map((row) => (
+                        <tr key={row.email}>
+                          <td>
+                            <strong>{row.fullName}</strong>
+                            <small>{row.uniqueId}</small>
+                          </td>
+                          <td>{row.role}</td>
+                          <td>{row.email}</td>
+                          <td>{row.uniqueId}</td>
+                          <td>{row.shiftStart}</td>
+                          <td>{row.shiftEnd}</td>
+                          <td>{row.timeInAt}</td>
+                          <td>{row.timeOutAt}</td>
+                          <td>
+                            <span
+                              className={
+                                row.status.toLowerCase().includes("late")
+                                  ? "badge red"
+                                  : row.status.toLowerCase().includes("checked")
+                                    ? "badge indigo"
+                                    : row.status.toLowerCase().includes("on time")
+                                      ? "badge green"
+                                      : "badge amber"
+                              }
+                            >
+                              {row.status}
+                            </span>
                           </td>
                         </tr>
                       ))
