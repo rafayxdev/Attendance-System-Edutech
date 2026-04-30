@@ -36,6 +36,15 @@ const createUserDataSchema = z.object({
   role: z.string().min(1),
   fullName: z.string().min(1),
   uniqueId: z.string().optional().nullable(),
+  attendanceSchedule: z
+    .array(
+      z.object({
+        day: z.enum(["mon", "tue", "wed", "thu", "fri"]),
+        startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
+        endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
+      }),
+    )
+    .min(1),
   isActive: z.boolean().optional(),
 });
 
@@ -44,6 +53,16 @@ const updateUserDataSchema = z.object({
   role: z.string().min(1).optional(),
   fullName: z.string().min(1).optional(),
   uniqueId: z.string().optional().nullable(),
+  attendanceSchedule: z
+    .array(
+      z.object({
+        day: z.enum(["mon", "tue", "wed", "thu", "fri"]),
+        startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
+        endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
+      }),
+    )
+    .min(1)
+    .optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -56,12 +75,14 @@ const allowedRoles = new Set([
   "internee",
   "faculty member",
   "faculty",
+  "visiting faculty",
   "human resource",
   "chief executive",
   "employee",
   "admin",
 ]);
 const credentialAuditAction = "USER_CREDENTIAL_GENERATED";
+const scheduleAuditAction = "USER_ATTENDANCE_SCHEDULE";
 
 type CredentialPayload = {
   email: string;
@@ -70,6 +91,11 @@ type CredentialPayload = {
   uniqueId: string | null;
   password: string;
   status: "created" | "updated";
+};
+
+type SchedulePayload = {
+  email: string;
+  schedule: Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>;
 };
 
 function parseCredentialPayload(payload: unknown): CredentialPayload | null {
@@ -96,6 +122,33 @@ function parseCredentialPayload(payload: unknown): CredentialPayload | null {
   };
 }
 
+function parseSchedulePayload(payload: unknown): SchedulePayload | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as Record<string, unknown>;
+  if (typeof row.email !== "string" || !Array.isArray(row.schedule)) return null;
+
+  const validDays = new Set(["mon", "tue", "wed", "thu", "fri"]);
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  const schedule = row.schedule
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      day: String(item.day || "").toLowerCase(),
+      startTime: String(item.startTime || ""),
+      endTime: String(item.endTime || ""),
+    }))
+    .filter(
+      (item) =>
+        validDays.has(item.day) &&
+        timeRegex.test(item.startTime) &&
+        timeRegex.test(item.endTime),
+    ) as SchedulePayload["schedule"];
+
+  return {
+    email: row.email.trim().toLowerCase(),
+    schedule,
+  };
+}
+
 function generatePassword(length = 10): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   let output = "";
@@ -103,6 +156,18 @@ function generatePassword(length = 10): string {
     output += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return output;
+}
+
+function hasInvalidScheduleRange(
+  schedule: Array<{ day: string; startTime: string; endTime: string }>,
+): boolean {
+  const toMinutes = (value: string): number => {
+    const [hour, minute] = value.split(":").map(Number);
+    return hour * 60 + minute;
+  };
+  return schedule.some(
+    (row) => toMinutes(row.startTime) >= toMinutes(row.endTime),
+  );
 }
 
 adminRouter.post(
@@ -282,11 +347,27 @@ adminRouter.get(
       orderBy: { createdAt: "desc" },
       take: 5000,
     });
+    const scheduleLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
 
     const generatedEmailSet = new Set<string>();
     for (const log of credentialLogs) {
       const payload = parseCredentialPayload(log.payload);
       if (payload) generatedEmailSet.add(payload.email.toLowerCase());
+    }
+    const scheduleByEmail = new Map<
+      string,
+      Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>
+    >();
+    for (const log of scheduleLogs) {
+      const payload = parseSchedulePayload(log.payload);
+      if (!payload) continue;
+      if (!scheduleByEmail.has(payload.email)) {
+        scheduleByEmail.set(payload.email, payload.schedule);
+      }
     }
 
     response.json(
@@ -296,6 +377,7 @@ adminRouter.get(
         role: user.role,
         fullName: user.fullName,
         uniqueId: user.uniqueId ?? "N/A",
+        attendanceSchedule: scheduleByEmail.get(user.email.toLowerCase()) ?? [],
         isActive: user.isActive,
         createdAt: user.createdAt,
       })),
@@ -316,6 +398,12 @@ adminRouter.post(
     const role = normalizeKey(parsed.data.role);
     const fullName = parsed.data.fullName.trim();
     const uniqueId = parsed.data.uniqueId?.trim() || null;
+    if (hasInvalidScheduleRange(parsed.data.attendanceSchedule)) {
+      response.status(400).json({
+        message: "Each attendance schedule must have end time after start time.",
+      });
+      return;
+    }
     const isActive = parsed.data.isActive ?? true;
 
     if (!allowedRoles.has(role)) {
@@ -342,6 +430,17 @@ adminRouter.post(
       },
     });
 
+    await prisma.auditLog.create({
+      data: {
+        actorEmail: request.auth?.email ?? null,
+        action: scheduleAuditAction,
+        payload: {
+          email,
+          schedule: parsed.data.attendanceSchedule,
+        },
+      },
+    });
+
     response.status(201).json({
       success: true,
       user: {
@@ -349,6 +448,7 @@ adminRouter.post(
         role: user.role,
         fullName: user.fullName,
         uniqueId: user.uniqueId ?? "N/A",
+        attendanceSchedule: parsed.data.attendanceSchedule,
         isActive: user.isActive,
       },
     });
@@ -384,6 +484,16 @@ adminRouter.put(
         : existing.uniqueId;
     const nextIsActive = parsed.data.isActive ?? existing.isActive;
 
+    if (
+      parsed.data.attendanceSchedule &&
+      hasInvalidScheduleRange(parsed.data.attendanceSchedule)
+    ) {
+      response.status(400).json({
+        message: "Each attendance schedule must have end time after start time.",
+      });
+      return;
+    }
+
     if (!allowedRoles.has(nextRole)) {
       response.status(400).json({ message: "Role is not allowed." });
       return;
@@ -412,6 +522,30 @@ adminRouter.put(
       },
     });
 
+    const scheduleLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+    const latestSchedule = scheduleLogs
+      .map((log) => parseSchedulePayload(log.payload))
+      .find((payload) => payload?.email === currentEmail);
+    const scheduleToSave =
+      parsed.data.attendanceSchedule ?? latestSchedule?.schedule ?? [];
+
+    if (scheduleToSave.length > 0 || nextEmail !== currentEmail) {
+      await prisma.auditLog.create({
+        data: {
+          actorEmail: request.auth?.email ?? null,
+          action: scheduleAuditAction,
+          payload: {
+            email: nextEmail,
+            schedule: scheduleToSave,
+          },
+        },
+      });
+    }
+
     response.json({
       success: true,
       user: {
@@ -419,6 +553,7 @@ adminRouter.put(
         role: updated.role,
         fullName: updated.fullName,
         uniqueId: updated.uniqueId ?? "N/A",
+        attendanceSchedule: scheduleToSave,
         isActive: updated.isActive,
       },
     });
@@ -516,6 +651,104 @@ adminRouter.put(
           uniqueId: user.uniqueId,
         },
       },
+    });
+
+    const credentialLogs = await prisma.auditLog.findMany({
+      where: { action: credentialAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+
+    const latestCredentialLog = credentialLogs.find((log) => {
+      const payload = parseCredentialPayload(log.payload);
+      return payload?.email.toLowerCase() === email;
+    });
+
+    if (latestCredentialLog) {
+      await prisma.auditLog.update({
+        where: { id: latestCredentialLog.id },
+        data: {
+          actorEmail: request.auth?.email ?? null,
+          payload: {
+            email: user.email,
+            fullName: user.fullName,
+            role: user.role,
+            uniqueId: user.uniqueId,
+            password: parsed.data.password,
+            status: "updated",
+          },
+        },
+      });
+    } else {
+      await prisma.auditLog.create({
+        data: {
+          actorEmail: request.auth?.email ?? null,
+          action: credentialAuditAction,
+          payload: {
+            email: user.email,
+            fullName: user.fullName,
+            role: user.role,
+            uniqueId: user.uniqueId,
+            password: parsed.data.password,
+            status: "updated",
+          },
+        },
+      });
+    }
+
+    response.json({ success: true });
+  },
+);
+
+adminRouter.delete(
+  "/users-credentials/:email",
+  async (request: AuthenticatedRequest, response) => {
+    const email = String(request.params.email).trim().toLowerCase();
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (!existing) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const credentialLogs = await prisma.auditLog.findMany({
+      where: { action: credentialAuditAction },
+      select: { id: true, payload: true },
+      take: 5000,
+    });
+    const passwordChangeLogs = await prisma.auditLog.findMany({
+      where: { action: "USER_CREDENTIAL_PASSWORD_CHANGED" },
+      select: { id: true, payload: true },
+      take: 5000,
+    });
+
+    const credentialLogIds = credentialLogs
+      .filter((log) => {
+        const payload = parseCredentialPayload(log.payload);
+        return payload?.email.toLowerCase() === email;
+      })
+      .map((log) => log.id);
+
+    const passwordChangeLogIds = passwordChangeLogs
+      .filter((log) => {
+        if (!log.payload || typeof log.payload !== "object") return false;
+        const payload = log.payload as Record<string, unknown>;
+        return (
+          typeof payload.email === "string" &&
+          payload.email.trim().toLowerCase() === email
+        );
+      })
+      .map((log) => log.id);
+
+    await prisma.$transaction(async (tx) => {
+      if (credentialLogIds.length > 0) {
+        await tx.auditLog.deleteMany({ where: { id: { in: credentialLogIds } } });
+      }
+      if (passwordChangeLogIds.length > 0) {
+        await tx.auditLog.deleteMany({
+          where: { id: { in: passwordChangeLogIds } },
+        });
+      }
+      await tx.user.delete({ where: { email } });
     });
 
     response.json({ success: true });

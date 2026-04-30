@@ -22,6 +22,7 @@ const userAllowedRoles = new Set([
   "internee",
   "faculty member",
   "faculty",
+  "visiting faculty",
   "human resource",
   "chief executive",
   "employee",
@@ -30,7 +31,9 @@ const userAllowedRoles = new Set([
 const roleAliases: Record<string, string> = {
   "human resourse": "human resource",
   "human resources": "human resource",
+  "hr manager": "human resource",
   hr: "human resource",
+  ceo: "chief executive",
   "chief excutive": "chief executive",
 };
 

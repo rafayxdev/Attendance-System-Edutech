@@ -15,6 +15,153 @@ import { env } from "../config/env.js";
 import { sendAttendanceEmail } from "../lib/email.js";
 
 export const attendanceRouter = Router();
+const scheduleAuditAction = "USER_ATTENDANCE_SCHEDULE";
+
+type ScheduleDay = "mon" | "tue" | "wed" | "thu" | "fri";
+
+function parseAttendanceSchedule(
+  value: unknown,
+): Array<{ day: ScheduleDay; startTime: string; endTime: string }> {
+  if (!Array.isArray(value)) return [];
+  const validDays = new Set<ScheduleDay>(["mon", "tue", "wed", "thu", "fri"]);
+  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  return value
+    .filter((row): row is Record<string, unknown> => Boolean(row))
+    .map((row) => ({
+      day: String(row.day || "").toLowerCase() as ScheduleDay,
+      startTime: String(row.startTime || ""),
+      endTime: String(row.endTime || ""),
+    }))
+    .filter(
+      (row) =>
+        validDays.has(row.day) &&
+        timeRegex.test(row.startTime) &&
+        timeRegex.test(row.endTime),
+    );
+}
+
+async function getUserScheduleByEmail(email: string) {
+  const logs = await prisma.auditLog.findMany({
+    where: { action: scheduleAuditAction },
+    orderBy: { createdAt: "desc" },
+    take: 5000,
+  });
+  const emailKey = email.trim().toLowerCase();
+  const latest = logs
+    .map((log) => log.payload)
+    .map((payload) => {
+      if (!payload || typeof payload !== "object") return null;
+      const row = payload as Record<string, unknown>;
+      if (typeof row.email !== "string") return null;
+      return {
+        email: row.email.trim().toLowerCase(),
+        schedule: parseAttendanceSchedule(row.schedule),
+      };
+    })
+    .find((entry) => entry?.email === emailKey);
+  return latest?.schedule ?? [];
+}
+
+function toMinutes(time: string): number {
+  const [hour, minute] = time.split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+function getWeekdayKey(date: Date, timeZone: string): string {
+  const label = new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    timeZone,
+  })
+    .format(date)
+    .toLowerCase();
+  if (label.startsWith("mon")) return "mon";
+  if (label.startsWith("tue")) return "tue";
+  if (label.startsWith("wed")) return "wed";
+  if (label.startsWith("thu")) return "thu";
+  if (label.startsWith("fri")) return "fri";
+  if (label.startsWith("sat")) return "sat";
+  return "sun";
+}
+
+function hhmmFromDate(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
+  return `${hour}:${minute}`;
+}
+
+function evaluateScheduleWindow(
+  params: {
+    schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
+    type: "Time In" | "Time Out";
+    now: Date;
+  },
+): { allowed: boolean; status: "On Time" | "Late"; message: string | null } {
+  const weekday = getWeekdayKey(params.now, env.appTimezone);
+  if (!["mon", "tue", "wed", "thu", "fri"].includes(weekday)) {
+    return {
+      allowed: false,
+      status: "On Time",
+      message: "Attendance is only available Monday to Friday.",
+    };
+  }
+
+  const todaySlot = params.schedule.find((row) => row.day === weekday);
+  if (!todaySlot) {
+    return {
+      allowed: false,
+      status: "On Time",
+      message: "Attendance is not configured for today. Please contact admin.",
+    };
+  }
+
+  const nowMinutes = toMinutes(hhmmFromDate(params.now, env.appTimezone));
+  const startMinutes = toMinutes(todaySlot.startTime);
+  const endMinutes = toMinutes(todaySlot.endTime);
+
+  if (params.type === "Time In") {
+    if (nowMinutes < startMinutes) {
+      return {
+        allowed: false,
+        status: "On Time",
+        message: `Time In starts at ${todaySlot.startTime}.`,
+      };
+    }
+    if (nowMinutes > endMinutes) {
+      return {
+        allowed: false,
+        status: "Late",
+        message: `Time In closed at ${todaySlot.endTime}.`,
+      };
+    }
+    return {
+      allowed: true,
+      status: nowMinutes > startMinutes + 15 ? "Late" : "On Time",
+      message: null,
+    };
+  }
+
+  if (nowMinutes < endMinutes) {
+    return {
+      allowed: false,
+      status: "On Time",
+      message: `Time Out is after ${todaySlot.endTime}.`,
+    };
+  }
+  if (nowMinutes > endMinutes + 60) {
+    return {
+      allowed: false,
+      status: "On Time",
+      message: `Time Out closed 1 hour after ${todaySlot.endTime}.`,
+    };
+  }
+  return { allowed: true, status: "On Time", message: null };
+}
 
 const attendanceSchema = z.object({
   type: z.enum(["Time In", "Time Out"]),
@@ -144,6 +291,20 @@ attendanceRouter.post(
 
     const now = new Date();
     const dayKey = formatDayKey(now);
+    const schedule = await getUserScheduleByEmail(user.email);
+    let scheduleStatus: "On Time" | "Late" | null = null;
+    if (schedule.length > 0) {
+      const window = evaluateScheduleWindow({
+        schedule,
+        type: parsed.data.type,
+        now,
+      });
+      if (!window.allowed) {
+        response.status(400).json({ message: window.message ?? "Not allowed." });
+        return;
+      }
+      scheduleStatus = window.status;
+    }
 
     const duplicate = await prisma.attendanceLog.findFirst({
       where: {
@@ -185,7 +346,8 @@ attendanceRouter.post(
       }
     }
 
-    const status = getLateStatus(user.role, parsed.data.type, now);
+    const status =
+      scheduleStatus ?? getLateStatus(user.role, parsed.data.type, now);
     const record = await storeAttendance({
       userId: user.id,
       category: user.role,
@@ -289,6 +451,44 @@ attendanceRouter.post(
           emailResult?.reason ??
           (user.email ? null : "No user email available for receipt."),
       },
+    });
+  },
+);
+
+attendanceRouter.get(
+  "/user-window",
+  requireAuth,
+  async (request: AuthenticatedRequest, response) => {
+    const auth = request.auth;
+    if (!auth) {
+      response.status(401).json({ message: "Unauthorized" });
+      return;
+    }
+
+    const selectedType =
+      String(request.query.type ?? "Time In") === "Time Out"
+        ? "Time Out"
+        : "Time In";
+    const user = await prisma.user.findUnique({ where: { id: auth.sub } });
+    if (!user) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const schedule = await getUserScheduleByEmail(user.email);
+    if (schedule.length === 0) {
+      response.json({ allowed: true, message: null });
+      return;
+    }
+
+    const window = evaluateScheduleWindow({
+      schedule,
+      type: selectedType,
+      now: new Date(),
+    });
+    response.json({
+      allowed: window.allowed,
+      message: window.message,
     });
   },
 );

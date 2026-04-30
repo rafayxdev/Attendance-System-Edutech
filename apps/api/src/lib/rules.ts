@@ -4,6 +4,7 @@ const lateCutoffs: Record<string, number> = {
   employee: 915,
   faculty: 915,
   "faculty member": 915,
+  "visiting faculty": 915,
   "human resource": 915,
   internee: 945,
 };
@@ -13,6 +14,7 @@ const restrictedCheckoutRoles = new Set([
   "employee",
   "faculty",
   "faculty member",
+  "visiting faculty",
   "human resource",
 ]);
 

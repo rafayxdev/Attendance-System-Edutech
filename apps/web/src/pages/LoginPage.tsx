@@ -28,10 +28,11 @@ type GuestResponse = {
 const USER_LOGIN_ROLES = [
   { value: "internee", label: "Internee" },
   { value: "student", label: "Student" },
-  { value: "human resourse", label: "Human Resourse" },
-  { value: "chief excutive", label: "Chief Excutive" },
+  { value: "human resource", label: "HR Manager" },
+  { value: "chief executive", label: "CEO" },
   { value: "employee", label: "Employee" },
   { value: "faculty member", label: "Faculty Member" },
+  { value: "visiting faculty", label: "Visiting Faculty" },
 ] as const;
 
 export function LoginPage({ onSessionChange }: LoginPageProps) {

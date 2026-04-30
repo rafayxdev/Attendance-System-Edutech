@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { clearSession, readSession } from "../auth/session";
@@ -56,8 +56,36 @@ function AttendanceContent({
   const [noticeType, setNoticeType] = useState<
     "success" | "error" | "info" | ""
   >("");
+  const [cameraAllowed, setCameraAllowed] = useState(true);
+  const [windowMessage, setWindowMessage] = useState("");
+
+  async function loadWindow(selectedType: "Time In" | "Time Out") {
+    try {
+      const result = await apiRequest<{ allowed: boolean; message: string | null }>(
+        `/attendance/user-window?type=${encodeURIComponent(selectedType)}`,
+      );
+      setCameraAllowed(result.allowed);
+      setWindowMessage(result.message ?? "");
+      if (!result.allowed) {
+        setImage("");
+      }
+    } catch {
+      setCameraAllowed(true);
+      setWindowMessage("");
+    }
+  }
+
+  useEffect(() => {
+    void loadWindow("Time In");
+  }, []);
   async function submitAttendance(event: React.FormEvent) {
     event.preventDefault();
+
+    if (!cameraAllowed) {
+      setNoticeType("error");
+      setNotice(windowMessage || "Attendance capture is not allowed right now.");
+      return;
+    }
 
     if (!image) {
       setNoticeType("error");
@@ -125,15 +153,12 @@ function AttendanceContent({
     <div className="page-shell">
       <div className="page-bg" />
       <main className="workspace-card glass-card user-attendance-card">
-        <header className="topbar">
+        <header className="topbar attendance-topbar">
           <div>
             <h1>Digital Attendance System</h1>
             <p>Welcome back, {session.name}</p>
-            <div className="presence-chip">
-              Verified Session • Ready to mark attendance
-            </div>
           </div>
-          <div className="topbar-actions">
+          <div className="topbar-actions attendance-actions">
             <button
               type="button"
               className="ghost-btn danger"
@@ -144,22 +169,22 @@ function AttendanceContent({
           </div>
         </header>
 
-        <section className="profile-grid">
+        <section className="profile-grid attendance-profile-grid">
           <div className="profile-card">
-            <span>Full Name</span>
+            <span>Full Name: </span>
             <strong>{session.name}</strong>
           </div>
           <div className="profile-card">
-            <span>Unique ID</span>
+            <span>Unique ID: </span>
             <strong>{session.uniqueId}</strong>
           </div>
           <div className="profile-card">
-            <span>Role</span>
+            <span>Role: </span>
             <strong>{session.role}</strong>
           </div>
           <div className="profile-card">
-            <span>Email</span>
-            <strong>{session.email}</strong>
+            <span>Email: </span>
+            <strong className="email-value">{session.email}</strong>
           </div>
         </section>
 
@@ -170,14 +195,20 @@ function AttendanceContent({
               <button
                 type="button"
                 className={type === "Time In" ? "pill active" : "pill"}
-                onClick={() => setType("Time In")}
+                onClick={() => {
+                  setType("Time In");
+                  void loadWindow("Time In");
+                }}
               >
                 Time In
               </button>
               <button
                 type="button"
                 className={type === "Time Out" ? "pill active" : "pill"}
-                onClick={() => setType("Time Out")}
+                onClick={() => {
+                  setType("Time Out");
+                  void loadWindow("Time Out");
+                }}
               >
                 Time Out
               </button>
@@ -196,7 +227,14 @@ function AttendanceContent({
             </span>
           </div>
 
-          <ImageCapture value={image} onChange={setImage} cameraOnly required />
+          {cameraAllowed ? (
+            <ImageCapture value={image} onChange={setImage} cameraOnly required />
+          ) : (
+            <div className="notice info">
+              {windowMessage ||
+                "You cannot capture image right now due to attendance time window."}
+            </div>
+          )}
 
           {notice ? (
             <div className={`notice ${noticeType}`}>{notice}</div>

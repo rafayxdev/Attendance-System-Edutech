@@ -11,6 +11,30 @@ interface AdminPageProps {
 }
 
 type AdminView = "overview" | "users" | "generator" | "credentials";
+type WeekdayKey = "mon" | "tue" | "wed" | "thu" | "fri";
+type WeekdaySchedule = {
+  day: WeekdayKey;
+  startTime: string;
+  endTime: string;
+};
+type ScheduleMode = "all-days" | "custom";
+
+const USER_ROLE_OPTIONS = [
+  { value: "internee", label: "Internee" },
+  { value: "faculty", label: "Faculty" },
+  { value: "visiting faculty", label: "Visiting Faculty" },
+  { value: "chief executive", label: "CEO" },
+  { value: "employee", label: "Employee" },
+  { value: "human resource", label: "HR Manager" },
+] as const;
+
+const WEEKDAY_OPTIONS: Array<{ value: WeekdayKey; label: string }> = [
+  { value: "mon", label: "Monday" },
+  { value: "tue", label: "Tuesday" },
+  { value: "wed", label: "Wednesday" },
+  { value: "thu", label: "Thursday" },
+  { value: "fri", label: "Friday" },
+];
 
 type BulkUserRow = {
   email: string;
@@ -36,6 +60,7 @@ type UserDataRow = {
   role: string;
   fullName: string;
   uniqueId: string;
+  attendanceSchedule?: WeekdaySchedule[];
   isActive: boolean;
   createdAt: string;
 };
@@ -45,9 +70,14 @@ type AddUserDataForm = {
   role: string;
   fullName: string;
   uniqueId: string;
+  attendanceSchedule: WeekdaySchedule[];
 };
 
-type EditUserDataForm = AddUserDataForm & {
+type EditUserDataForm = {
+  email: string;
+  role: string;
+  fullName: string;
+  uniqueId: string;
   isActive: boolean;
 };
 
@@ -123,11 +153,18 @@ function AdminContent({
   const [usersBusy, setUsersBusy] = useState(false);
   const [addUserBusy, setAddUserBusy] = useState(false);
   const [addUserMessage, setAddUserMessage] = useState("");
+  const [showAddUserForm, setShowAddUserForm] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("all-days");
+  const [allDaysSchedule, setAllDaysSchedule] = useState({
+    startTime: "09:00",
+    endTime: "17:00",
+  });
   const [addUserForm, setAddUserForm] = useState<AddUserDataForm>({
     email: "",
     role: "",
     fullName: "",
     uniqueId: "",
+    attendanceSchedule: [{ day: "mon", startTime: "09:00", endTime: "17:00" }],
   });
   const [editUserBusy, setEditUserBusy] = useState(false);
   const [editUserMessage, setEditUserMessage] = useState("");
@@ -266,8 +303,62 @@ function AdminContent({
     ]);
   }
 
+  function updateAddUserSchedule(
+    index: number,
+    key: keyof WeekdaySchedule,
+    value: string,
+  ) {
+    setAddUserForm((prev) => ({
+      ...prev,
+      attendanceSchedule: prev.attendanceSchedule.map((slot, slotIndex) =>
+        slotIndex === index ? { ...slot, [key]: value } : slot,
+      ),
+    }));
+  }
+
+  function addScheduleSlot() {
+    if (addUserForm.attendanceSchedule.length >= 5) {
+      setAddUserMessage("You can add maximum 5 custom weekdays.");
+      return;
+    }
+    setAddUserMessage("");
+    setAddUserForm((prev) => ({
+      ...prev,
+      attendanceSchedule: [
+        ...prev.attendanceSchedule,
+        { day: "mon", startTime: "09:00", endTime: "17:00" },
+      ],
+    }));
+  }
+
+  function applyScheduleToAllWeekdays() {
+    setScheduleMode("all-days");
+    setAddUserMessage("");
+  }
+
+  function removeScheduleSlot(index: number) {
+    setAddUserForm((prev) => ({
+      ...prev,
+      attendanceSchedule: prev.attendanceSchedule.filter(
+        (_slot, slotIndex) => slotIndex !== index,
+      ),
+    }));
+  }
+
   async function handleAddUserData(event: React.FormEvent) {
     event.preventDefault();
+    const schedulePayload =
+      scheduleMode === "all-days"
+        ? WEEKDAY_OPTIONS.map((weekday) => ({
+            day: weekday.value,
+            startTime: allDaysSchedule.startTime,
+            endTime: allDaysSchedule.endTime,
+          }))
+        : addUserForm.attendanceSchedule;
+    if (schedulePayload.length === 0) {
+      setAddUserMessage("Add at least one weekday schedule.");
+      return;
+    }
 
     setAddUserBusy(true);
     setAddUserMessage("");
@@ -279,6 +370,7 @@ function AdminContent({
           role: addUserForm.role.trim(),
           fullName: addUserForm.fullName.trim(),
           uniqueId: addUserForm.uniqueId.trim() || null,
+          attendanceSchedule: schedulePayload,
           isActive: true,
         }),
       });
@@ -286,7 +378,16 @@ function AdminContent({
       setAddUserMessage(
         "User added successfully. Credentials are pending generation.",
       );
-      setAddUserForm({ email: "", role: "", fullName: "", uniqueId: "" });
+      setShowAddUserForm(false);
+      setScheduleMode("all-days");
+      setAllDaysSchedule({ startTime: "09:00", endTime: "17:00" });
+      setAddUserForm({
+        email: "",
+        role: "",
+        fullName: "",
+        uniqueId: "",
+        attendanceSchedule: [{ day: "mon", startTime: "09:00", endTime: "17:00" }],
+      });
       await loadUsersData();
     } catch (error) {
       setAddUserMessage(
@@ -392,6 +493,36 @@ function AdminContent({
     }
   }
 
+  async function handleDeleteCredential(email: string) {
+    const confirmDelete = window.confirm(
+      `Delete credentials for ${email}? This will remove the user login.`,
+    );
+    if (!confirmDelete) return;
+
+    setPasswordBusy(true);
+    setPasswordMessage("");
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/admin/users-credentials/${encodeURIComponent(email)}`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (selectedCredentialEmail === email) {
+        setSelectedCredentialEmail(null);
+        setNewCredentialPassword("");
+      }
+      setPasswordMessage("User credentials deleted successfully.");
+      await Promise.all([loadCredentials(), loadUsersData()]);
+    } catch (error) {
+      setPasswordMessage(
+        error instanceof Error ? error.message : "Failed to delete credentials.",
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (view === "overview") {
       void loadOverview();
@@ -440,15 +571,15 @@ function AdminContent({
   return (
     <div className="page-shell admin-shell">
       <div className="page-bg admin-bg" />
-      <main className="workspace-card glass-card">
-        <header className="topbar">
+      <main className="workspace-card glass-card admin-workspace">
+        <header className="topbar admin-topbar">
           <div>
             <h1>Admin Dashboard</h1>
             <p>
               {session.name} · {session.email}
             </p>
           </div>
-          <div className="topbar-actions">
+          <div className="topbar-actions admin-actions">
             <button
               type="button"
               className="ghost-btn"
@@ -680,7 +811,6 @@ function AdminContent({
           <section className="table-card user-generator-card">
             <div className="table-head">
               <h2>Users Data</h2>
-              <span>Gmail, Generated, Role, Name, Unique ID</span>
             </div>
             <div className="user-generator-body">
               {editingUserEmail ? (
@@ -768,63 +898,222 @@ function AdminContent({
               {editUserMessage ? (
                 <div className="notice success">{editUserMessage}</div>
               ) : null}
-              <form className="users-add-form" onSubmit={handleAddUserData}>
-                <input
-                  className="search-input"
-                  placeholder="Gmail"
-                  value={addUserForm.email}
-                  onChange={(event) =>
-                    setAddUserForm((prev) => ({
-                      ...prev,
-                      email: event.target.value,
-                    }))
-                  }
-                  type="email"
-                  required
-                />
-                <input
-                  className="search-input"
-                  placeholder="Role"
-                  value={addUserForm.role}
-                  onChange={(event) =>
-                    setAddUserForm((prev) => ({
-                      ...prev,
-                      role: event.target.value,
-                    }))
-                  }
-                  required
-                />
-                <input
-                  className="search-input"
-                  placeholder="Name"
-                  value={addUserForm.fullName}
-                  onChange={(event) =>
-                    setAddUserForm((prev) => ({
-                      ...prev,
-                      fullName: event.target.value,
-                    }))
-                  }
-                  required
-                />
-                <input
-                  className="search-input"
-                  placeholder="Unique ID"
-                  value={addUserForm.uniqueId}
-                  onChange={(event) =>
-                    setAddUserForm((prev) => ({
-                      ...prev,
-                      uniqueId: event.target.value,
-                    }))
-                  }
-                />
-                <button
-                  type="submit"
-                  className="primary-btn slim"
-                  disabled={addUserBusy}
-                >
-                  {addUserBusy ? "Adding..." : "Add User"}
-                </button>
-              </form>
+              {!showAddUserForm ? (
+                <div className="users-form-launch">
+                  <button
+                    type="button"
+                    className="primary-btn slim"
+                    onClick={() => {
+                      setShowAddUserForm(true);
+                      setScheduleMode("all-days");
+                      setAddUserMessage("");
+                    }}
+                  >
+                    Add User
+                  </button>
+                </div>
+              ) : (
+                <form className="users-add-form detailed" onSubmit={handleAddUserData}>
+                  <input
+                    className="search-input"
+                    placeholder="Gmail"
+                    value={addUserForm.email}
+                    onChange={(event) =>
+                      setAddUserForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                    type="email"
+                    required
+                  />
+                  <select
+                    className="search-input"
+                    value={addUserForm.role}
+                    onChange={(event) =>
+                      setAddUserForm((prev) => ({
+                        ...prev,
+                        role: event.target.value,
+                      }))
+                    }
+                    required
+                  >
+                    <option value="">Select role</option>
+                    {USER_ROLE_OPTIONS.map((roleOption) => (
+                      <option key={roleOption.value} value={roleOption.value}>
+                        {roleOption.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="search-input"
+                    placeholder="Name"
+                    value={addUserForm.fullName}
+                    onChange={(event) =>
+                      setAddUserForm((prev) => ({
+                        ...prev,
+                        fullName: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                  <input
+                    className="search-input"
+                    placeholder="Unique ID"
+                    value={addUserForm.uniqueId}
+                    onChange={(event) =>
+                      setAddUserForm((prev) => ({
+                        ...prev,
+                        uniqueId: event.target.value,
+                      }))
+                    }
+                  />
+                  <div className="schedule-editor">
+                    <div className="schedule-head">
+                      <strong>Attendance Schedule (Mon-Fri)</strong>
+                      <div className="schedule-head-actions">
+                        <button
+                          type="button"
+                          className={
+                            scheduleMode === "all-days"
+                              ? "ghost-btn active-schedule-mode"
+                              : "ghost-btn"
+                          }
+                          onClick={applyScheduleToAllWeekdays}
+                        >
+                          Apply to All Weekdays
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            scheduleMode === "custom"
+                              ? "ghost-btn active-schedule-mode"
+                              : "ghost-btn"
+                          }
+                          onClick={() => {
+                            setScheduleMode("custom");
+                            if (addUserForm.attendanceSchedule.length === 0) {
+                              setAddUserForm((prev) => ({
+                                ...prev,
+                                attendanceSchedule: [
+                                  {
+                                    day: "mon",
+                                    startTime: "09:00",
+                                    endTime: "17:00",
+                                  },
+                                ],
+                              }));
+                            }
+                          }}
+                        >
+                          Add Custom Day
+                        </button>
+                      </div>
+                    </div>
+                    {scheduleMode === "all-days" ? (
+                      <div className="schedule-row all-days-row">
+                        <div className="all-days-label">Mon - Fri</div>
+                        <input
+                          type="time"
+                          value={allDaysSchedule.startTime}
+                          onChange={(event) =>
+                            setAllDaysSchedule((prev) => ({
+                              ...prev,
+                              startTime: event.target.value,
+                            }))
+                          }
+                          required
+                        />
+                        <input
+                          type="time"
+                          value={allDaysSchedule.endTime}
+                          onChange={(event) =>
+                            setAllDaysSchedule((prev) => ({
+                              ...prev,
+                              endTime: event.target.value,
+                            }))
+                          }
+                          required
+                        />
+                      </div>
+                    ) : (
+                      <>
+                        {addUserForm.attendanceSchedule.map((slot, index) => (
+                          <div className="schedule-row" key={`${slot.day}-${index}`}>
+                            <select
+                              value={slot.day}
+                              onChange={(event) =>
+                                updateAddUserSchedule(index, "day", event.target.value)
+                              }
+                            >
+                              {WEEKDAY_OPTIONS.map((weekdayOption) => (
+                                <option
+                                  key={weekdayOption.value}
+                                  value={weekdayOption.value}
+                                >
+                                  {weekdayOption.label}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="time"
+                              value={slot.startTime}
+                              onChange={(event) =>
+                                updateAddUserSchedule(
+                                  index,
+                                  "startTime",
+                                  event.target.value,
+                                )
+                              }
+                              required
+                            />
+                            <input
+                              type="time"
+                              value={slot.endTime}
+                              onChange={(event) =>
+                                updateAddUserSchedule(index, "endTime", event.target.value)
+                              }
+                              required
+                            />
+                            <button
+                              type="button"
+                              className="ghost-btn danger"
+                              onClick={() => removeScheduleSlot(index)}
+                              disabled={addUserForm.attendanceSchedule.length === 1}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          className="ghost-btn add-custom-day-btn"
+                          onClick={addScheduleSlot}
+                          disabled={addUserForm.attendanceSchedule.length >= 5}
+                        >
+                          Add One More Day
+                        </button>
+                      </>
+                    )}
+                  </div>
+                  <div className="users-add-actions">
+                    <button
+                      type="submit"
+                      className="primary-btn slim"
+                      disabled={addUserBusy}
+                    >
+                      {addUserBusy ? "Adding..." : "Create User"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={() => setShowAddUserForm(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
               {addUserMessage ? (
                 <div className="notice success">{addUserMessage}</div>
               ) : null}
@@ -1064,16 +1353,26 @@ function AdminContent({
                           <td>{new Date(row.generatedAt).toLocaleString()}</td>
                           <td>{row.generatedBy}</td>
                           <td>
-                            <button
-                              type="button"
-                              className="text-btn"
-                              onClick={() => {
-                                setSelectedCredentialEmail(row.email);
-                                setNewCredentialPassword("");
-                              }}
-                            >
-                              Change Password
-                            </button>
+                            <div className="row-actions">
+                              <button
+                                type="button"
+                                className="text-btn action-btn"
+                                onClick={() => {
+                                  setSelectedCredentialEmail(row.email);
+                                  setNewCredentialPassword("");
+                                }}
+                              >
+                                Change Password
+                              </button>
+                              <button
+                                type="button"
+                                className="text-btn action-btn danger-text"
+                                onClick={() => void handleDeleteCredential(row.email)}
+                                disabled={passwordBusy}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
