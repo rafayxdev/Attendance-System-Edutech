@@ -1270,11 +1270,55 @@ adminRouter.delete(
   "/users-credentials/:email",
   async (request: AuthenticatedRequest, response) => {
     const email = String(request.params.email).trim().toLowerCase();
-    const result = await purgeUserAndAllRecords(email);
-    if (result === "not_found") {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
       response.status(404).json({ message: "User not found." });
       return;
     }
+
+    const credentialLogs = await prisma.auditLog.findMany({
+      where: { action: credentialAuditAction },
+      select: { id: true, payload: true },
+      take: 5000,
+    });
+    const credentialLogIds = credentialLogs
+      .filter((log) => {
+        const payload = parseCredentialPayload(log.payload);
+        return payload?.email.toLowerCase() === email;
+      })
+      .map((log) => log.id);
+
+    const passwordChangeLogs = await prisma.auditLog.findMany({
+      where: { action: passwordChangeAuditAction },
+      select: { id: true, payload: true },
+      take: 5000,
+    });
+    const passwordChangeLogIds = passwordChangeLogs
+      .filter((log) => {
+        if (!log.payload || typeof log.payload !== "object") return false;
+        const payload = log.payload as Record<string, unknown>;
+        return (
+          typeof payload.email === "string" &&
+          payload.email.trim().toLowerCase() === email
+        );
+      })
+      .map((log) => log.id);
+
+    const disabledPasswordHash = await bcrypt.hash(generatePassword(24), 10);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { passwordHash: disabledPasswordHash },
+      });
+      if (credentialLogIds.length > 0) {
+        await tx.auditLog.deleteMany({ where: { id: { in: credentialLogIds } } });
+      }
+      if (passwordChangeLogIds.length > 0) {
+        await tx.auditLog.deleteMany({
+          where: { id: { in: passwordChangeLogIds } },
+        });
+      }
+    });
     response.json({ success: true });
   },
 );

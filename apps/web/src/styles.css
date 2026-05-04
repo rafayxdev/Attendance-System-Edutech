@@ -973,6 +973,35 @@ button {
   transform: none;
 }
 
+.ghost-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: rgba(226, 232, 240, 0.55);
+  border-color: rgba(148, 163, 184, 0.18);
+  background: rgba(148, 163, 184, 0.08);
+  box-shadow: none;
+  transform: none;
+}
+
+.ghost-btn:disabled:hover {
+  transform: none;
+}
+
+.refresh-btn-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refresh-btn-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(226, 232, 240, 0.28);
+  border-top-color: rgba(226, 232, 240, 0.95);
+  animation: spin 0.8s linear infinite;
+}
+
 .ghost-btn,
 .text-btn {
   padding: 10px 14px;

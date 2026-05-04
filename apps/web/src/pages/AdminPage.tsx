@@ -245,6 +245,8 @@ function AdminContent({
   const [date, setDate] = useState("");
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [refreshBusy, setRefreshBusy] = useState(false);
+  const [logsListPage, setLogsListPage] = useState(1);
 
   const [generateBusy, setGenerateBusy] = useState(false);
   const [generateMessage, setGenerateMessage] = useState("");
@@ -283,6 +285,7 @@ function AdminContent({
   const [credentialsSearch, setCredentialsSearch] = useState("");
   const [credentialsData, setCredentialsData] = useState<CredentialRow[]>([]);
   const [credentialsBusy, setCredentialsBusy] = useState(false);
+  const [credentialsListPage, setCredentialsListPage] = useState(1);
   const [selectedCredentialEmail, setSelectedCredentialEmail] = useState<
     string | null
   >(null);
@@ -293,6 +296,7 @@ function AdminContent({
   const [shiftsSearch, setShiftsSearch] = useState("");
   const [shiftsData, setShiftsData] = useState<ShiftRow[]>([]);
   const [shiftsBusy, setShiftsBusy] = useState(false);
+  const [shiftsListPage, setShiftsListPage] = useState(1);
 
   const [monthlyMonth, setMonthlyMonth] = useState(() => {
     const now = new Date();
@@ -304,6 +308,8 @@ function AdminContent({
   const [monthlySearch, setMonthlySearch] = useState("");
   const [monthlyData, setMonthlyData] = useState<MonthlyAttendanceRow[]>([]);
   const [monthlyBusy, setMonthlyBusy] = useState(false);
+  const [monthlyListPage, setMonthlyListPage] = useState(1);
+  const [pendingUsersListPage, setPendingUsersListPage] = useState(1);
 
   async function loadShifts() {
     setShiftsBusy(true);
@@ -314,6 +320,7 @@ function AdminContent({
         `/admin/shifts-today?${query.toString()}`,
       );
       setShiftsData(rows);
+      setShiftsListPage(1);
     } catch (error) {
       console.error(error);
     } finally {
@@ -331,6 +338,7 @@ function AdminContent({
         `/admin/monthly-attendance?${query.toString()}`,
       );
       setMonthlyData(rows);
+      setMonthlyListPage(1);
     } catch (error) {
       console.error(error);
     } finally {
@@ -393,6 +401,7 @@ function AdminContent({
       );
       setStats(statsResult);
       setLogs(logsResult);
+      setLogsListPage(1);
     } catch (error) {
       console.error(error);
     } finally {
@@ -427,6 +436,7 @@ function AdminContent({
         `/admin/users-credentials?${query.toString()}`,
       );
       setCredentialsData(rows);
+      setCredentialsListPage(1);
     } catch (error) {
       console.error(error);
     } finally {
@@ -800,7 +810,7 @@ function AdminContent({
         setNewCredentialPassword("");
       }
       setPasswordMessage(
-        "User and all related data (credentials, attendance, schedules, monthly rows) were removed.",
+        "Credentials removed. User profile and attendance data remain, and credentials can be generated again.",
       );
       await Promise.all([loadCredentials(), loadUsersData()]);
     } catch (error) {
@@ -823,6 +833,54 @@ function AdminContent({
     () => usersData.filter((row) => !row.generated),
     [usersData],
   );
+  const logsTotalPages = Math.max(1, Math.ceil(logs.length / USER_PAGE_SIZE));
+  const logsPageClamped = Math.min(logsListPage, logsTotalPages);
+  const logsPagedRows = useMemo(() => {
+    const start = (logsPageClamped - 1) * USER_PAGE_SIZE;
+    return logs.slice(start, start + USER_PAGE_SIZE);
+  }, [logs, logsPageClamped]);
+  const pendingUsersTotalPages = Math.max(
+    1,
+    Math.ceil(pendingUsers.length / USER_PAGE_SIZE),
+  );
+  const pendingUsersPageClamped = Math.min(
+    pendingUsersListPage,
+    pendingUsersTotalPages,
+  );
+  const pendingUsersPagedRows = useMemo(() => {
+    const start = (pendingUsersPageClamped - 1) * USER_PAGE_SIZE;
+    return pendingUsers.slice(start, start + USER_PAGE_SIZE);
+  }, [pendingUsers, pendingUsersPageClamped]);
+  const credentialsTotalPages = Math.max(
+    1,
+    Math.ceil(credentialsData.length / USER_PAGE_SIZE),
+  );
+  const credentialsPageClamped = Math.min(
+    credentialsListPage,
+    credentialsTotalPages,
+  );
+  const credentialsPagedRows = useMemo(() => {
+    const start = (credentialsPageClamped - 1) * USER_PAGE_SIZE;
+    return credentialsData.slice(start, start + USER_PAGE_SIZE);
+  }, [credentialsData, credentialsPageClamped]);
+  const shiftsTotalPages = Math.max(
+    1,
+    Math.ceil(shiftsData.length / USER_PAGE_SIZE),
+  );
+  const shiftsPageClamped = Math.min(shiftsListPage, shiftsTotalPages);
+  const shiftsPagedRows = useMemo(() => {
+    const start = (shiftsPageClamped - 1) * USER_PAGE_SIZE;
+    return shiftsData.slice(start, start + USER_PAGE_SIZE);
+  }, [shiftsData, shiftsPageClamped]);
+  const monthlyTotalPages = Math.max(
+    1,
+    Math.ceil(monthlyData.length / USER_PAGE_SIZE),
+  );
+  const monthlyPageClamped = Math.min(monthlyListPage, monthlyTotalPages);
+  const monthlyPagedRows = useMemo(() => {
+    const start = (monthlyPageClamped - 1) * USER_PAGE_SIZE;
+    return monthlyData.slice(start, start + USER_PAGE_SIZE);
+  }, [monthlyData, monthlyPageClamped]);
 
   const usersTotalPages = Math.max(
     1,
@@ -840,6 +898,27 @@ function AdminContent({
       setUsersListPage(usersTotalPages);
     }
   }, [usersListPage, usersTotalPages]);
+  useEffect(() => {
+    if (logsListPage > logsTotalPages) setLogsListPage(logsTotalPages);
+  }, [logsListPage, logsTotalPages]);
+  useEffect(() => {
+    if (pendingUsersListPage > pendingUsersTotalPages) {
+      setPendingUsersListPage(pendingUsersTotalPages);
+    }
+  }, [pendingUsersListPage, pendingUsersTotalPages]);
+  useEffect(() => {
+    if (credentialsListPage > credentialsTotalPages) {
+      setCredentialsListPage(credentialsTotalPages);
+    }
+  }, [credentialsListPage, credentialsTotalPages]);
+  useEffect(() => {
+    if (shiftsListPage > shiftsTotalPages) setShiftsListPage(shiftsTotalPages);
+  }, [shiftsListPage, shiftsTotalPages]);
+  useEffect(() => {
+    if (monthlyListPage > monthlyTotalPages) {
+      setMonthlyListPage(monthlyTotalPages);
+    }
+  }, [monthlyListPage, monthlyTotalPages]);
 
   useEffect(() => {
     if (!userDetailsRow) return;
@@ -948,6 +1027,37 @@ function AdminContent({
     URL.revokeObjectURL(url);
   }
 
+  async function refreshCurrentAdminView() {
+    if (refreshBusy) return;
+    setRefreshBusy(true);
+    try {
+      switch (view) {
+        case "overview":
+          await loadOverview();
+          break;
+        case "users":
+          await loadUsersData();
+          break;
+        case "generator":
+          await loadUsersData();
+          break;
+        case "credentials":
+          await loadCredentials();
+          break;
+        case "shifts":
+          await loadShifts();
+          break;
+        case "attendance":
+          await Promise.all([loadMonthlyMonths(), loadMonthlyAttendance()]);
+          break;
+        default:
+          break;
+      }
+    } finally {
+      setRefreshBusy(false);
+    }
+  }
+
   return (
     <div className="page-shell admin-shell">
       <div className="page-bg admin-bg" />
@@ -963,9 +1073,17 @@ function AdminContent({
             <button
               type="button"
               className="ghost-btn"
-              onClick={() => window.location.reload()}
+              disabled={refreshBusy}
+              onClick={() => void refreshCurrentAdminView()}
             >
-              Refresh
+              {refreshBusy ? (
+                <span className="refresh-btn-content">
+                  <span className="refresh-btn-spinner" aria-hidden="true" />
+                  Refreshing...
+                </span>
+              ) : (
+                "Refresh"
+              )}
             </button>
             <button
               type="button"
@@ -1150,7 +1268,7 @@ function AdminContent({
                         </td>
                       </tr>
                     ) : (
-                      logs.map((log) => (
+                      logsPagedRows.map((log) => (
                         <tr key={log.id}>
                           <td>{log.timestamp.time}</td>
                           <td>{log.uniqueId}</td>
@@ -1204,6 +1322,34 @@ function AdminContent({
                   </tbody>
                 </table>
               </div>
+              {logs.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {logsPageClamped} of {logsTotalPages} · {logs.length} record
+                    {logs.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={logsPageClamped <= 1}
+                      onClick={() => setLogsListPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={logsPageClamped >= logsTotalPages}
+                      onClick={() =>
+                        setLogsListPage((p) => Math.min(logsTotalPages, p + 1))
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </section>
           </>
         ) : null}
@@ -1518,21 +1664,17 @@ function AdminContent({
                     <button
                       type="button"
                       className="ghost-btn slim"
-                      disabled={usersListPage <= 1}
-                      onClick={() =>
-                        setUsersListPage((p) => Math.max(1, p - 1))
-                      }
+                      disabled={usersPageClamped <= 1}
+                      onClick={() => setUsersListPage((p) => Math.max(1, p - 1))}
                     >
                       Previous
                     </button>
                     <button
                       type="button"
                       className="ghost-btn slim"
-                      disabled={usersListPage >= usersTotalPages}
+                      disabled={usersPageClamped >= usersTotalPages}
                       onClick={() =>
-                        setUsersListPage((p) =>
-                          Math.min(usersTotalPages, p + 1),
-                        )
+                        setUsersListPage((p) => Math.min(usersTotalPages, p + 1))
                       }
                     >
                       Next
@@ -1964,7 +2106,7 @@ function AdminContent({
                         </td>
                       </tr>
                     ) : (
-                      pendingUsers.map((row) => (
+                      pendingUsersPagedRows.map((row) => (
                         <tr key={row.email}>
                           <td>{row.email}</td>
                           <td>{row.role}</td>
@@ -1986,6 +2128,38 @@ function AdminContent({
                   </tbody>
                 </table>
               </div>
+              {pendingUsers.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {pendingUsersPageClamped} of {pendingUsersTotalPages} ·{" "}
+                    {pendingUsers.length} pending
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={pendingUsersPageClamped <= 1}
+                      onClick={() =>
+                        setPendingUsersListPage((p) => Math.max(1, p - 1))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={pendingUsersPageClamped >= pendingUsersTotalPages}
+                      onClick={() =>
+                        setPendingUsersListPage((p) =>
+                          Math.min(pendingUsersTotalPages, p + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -2072,7 +2246,7 @@ function AdminContent({
                         </td>
                       </tr>
                     ) : (
-                      credentialsData.map((row, index) => (
+                      credentialsPagedRows.map((row, index) => (
                         <tr key={`${row.email}-${row.generatedAt}-${index}`}>
                           <td>{row.email}</td>
                           <td>{row.password}</td>
@@ -2110,6 +2284,39 @@ function AdminContent({
                   </tbody>
                 </table>
               </div>
+              {credentialsData.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {credentialsPageClamped} of {credentialsTotalPages} ·{" "}
+                    {credentialsData.length} credential record
+                    {credentialsData.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={credentialsPageClamped <= 1}
+                      onClick={() =>
+                        setCredentialsListPage((p) => Math.max(1, p - 1))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={credentialsPageClamped >= credentialsTotalPages}
+                      onClick={() =>
+                        setCredentialsListPage((p) =>
+                          Math.min(credentialsTotalPages, p + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -2160,7 +2367,7 @@ function AdminContent({
                         </td>
                       </tr>
                     ) : (
-                      shiftsData.map((row) => (
+                      shiftsPagedRows.map((row) => (
                         <tr key={row.email}>
                           <td>
                             <strong>{row.fullName}</strong>
@@ -2194,6 +2401,35 @@ function AdminContent({
                   </tbody>
                 </table>
               </div>
+              {shiftsData.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {shiftsPageClamped} of {shiftsTotalPages} ·{" "}
+                    {shiftsData.length} shift record
+                    {shiftsData.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={shiftsPageClamped <= 1}
+                      onClick={() => setShiftsListPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={shiftsPageClamped >= shiftsTotalPages}
+                      onClick={() =>
+                        setShiftsListPage((p) => Math.min(shiftsTotalPages, p + 1))
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </section>
         ) : null}
@@ -2268,7 +2504,7 @@ function AdminContent({
                         </td>
                       </tr>
                     ) : (
-                      monthlyData.map((row) => (
+                      monthlyPagedRows.map((row) => (
                         <tr key={`${row.month}-${row.email}`}>
                           <td>
                             <strong>{row.fullName}</strong>
@@ -2293,6 +2529,39 @@ function AdminContent({
                   </tbody>
                 </table>
               </div>
+              {monthlyData.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {monthlyPageClamped} of {monthlyTotalPages} ·{" "}
+                    {monthlyData.length} monthly record
+                    {monthlyData.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={monthlyPageClamped <= 1}
+                      onClick={() =>
+                        setMonthlyListPage((p) => Math.max(1, p - 1))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={monthlyPageClamped >= monthlyTotalPages}
+                      onClick={() =>
+                        setMonthlyListPage((p) =>
+                          Math.min(monthlyTotalPages, p + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="notice info">
                 3 Late days are counted as 1 Absent day in Effective totals.
               </div>
