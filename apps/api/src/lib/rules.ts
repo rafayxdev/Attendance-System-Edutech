@@ -49,8 +49,9 @@ export function formatDisplayDateTime(
   });
   const timeFormatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
   });
 
   return {

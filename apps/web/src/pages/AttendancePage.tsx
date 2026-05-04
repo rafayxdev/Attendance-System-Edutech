@@ -4,6 +4,10 @@ import { apiRequest } from "../api/client";
 import { clearSession, readSession } from "../auth/session";
 import { AccessGate } from "../components/AccessGate";
 import { ImageCapture } from "../components/ImageCapture";
+import {
+  formatInstant12hWithSeconds,
+  formatInstantShortDate,
+} from "../lib/timeDisplay";
 import type { AuthSession, AccessPolicy } from "../types";
 import logoUrl from "../images/EduTech Logo.png";
 
@@ -63,6 +67,18 @@ function AttendanceContent({
   const [cameraAllowed, setCameraAllowed] = useState(true);
   const [windowMessage, setWindowMessage] = useState("");
   const [autoMessage, setAutoMessage] = useState("");
+  const [liveNow, setLiveNow] = useState(() => new Date());
+
+  const clockTimeZone =
+    access.policy?.timezone ??
+    Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setLiveNow(new Date());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   async function loadWindow(selectedType: "Time In" | "Time Out") {
     try {
@@ -196,6 +212,16 @@ function AttendanceContent({
             </div>
           </div>
           <div className="topbar-actions attendance-actions">
+            <div className="attendance-live-clock" aria-live="polite">
+              <span className="attendance-live-clock-label">Current time</span>
+              <time
+                className="attendance-live-clock-value"
+                dateTime={liveNow.toISOString()}
+              >
+                {formatInstantShortDate(liveNow, clockTimeZone)} ·{" "}
+                {formatInstant12hWithSeconds(liveNow, clockTimeZone)}
+              </time>
+            </div>
             <button
               type="button"
               className="ghost-btn danger"

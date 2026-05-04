@@ -5,10 +5,13 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w @edutech/api",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev -w @edutech/api",
     "dev:web": "npm run dev -w @edutech/web",
     "build": "npm run build -w @edutech/api && npm run build -w @edutech/web",
     "lint": "npm run lint -w @edutech/api && npm run lint -w @edutech/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

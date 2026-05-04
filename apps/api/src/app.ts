@@ -5,6 +5,71 @@ import { attendanceRouter } from "./routes/attendance.js";
 import { adminRouter } from "./routes/admin.js";
 import { configRouter } from "./routes/config.js";
 
+function mapHandledDatabaseError(
+  error: unknown,
+): { status: number; message: string } | null {
+  if (!error || typeof error !== "object") return null;
+  const rec = error as Record<string, unknown>;
+  const name = typeof rec.name === "string" ? rec.name : "";
+  const code = typeof rec.code === "string" ? rec.code : "";
+  const prismaMessage =
+    typeof rec.message === "string" ? rec.message : "Database error";
+
+  if (name === "PrismaClientKnownRequestError") {
+    switch (code) {
+      case "P1001":
+        return {
+          status: 503,
+          message:
+            "Cannot reach the database. Check DATABASE_URL, that the host (e.g. Supabase) is running, and that your network or firewall allows outbound connections to the database port.",
+        };
+      case "P1000":
+        return {
+          status: 503,
+          message:
+            "Database authentication failed. Verify DATABASE_URL username and password.",
+        };
+      case "P1008":
+      case "P1017":
+        return {
+          status: 503,
+          message:
+            "The database closed or timed out the connection. Try again in a moment.",
+        };
+      case "P2002":
+        return {
+          status: 409,
+          message:
+            "A user with this email or another unique field already exists.",
+        };
+      default:
+        return process.env.NODE_ENV === "production"
+          ? { status: 500, message: "Internal server error" }
+          : {
+              status: 500,
+              message: `Database error (${code}): ${prismaMessage}`,
+            };
+    }
+  }
+
+  if (name === "PrismaClientInitializationError") {
+    return {
+      status: 503,
+      message:
+        "Database could not be initialized. Check DATABASE_URL format and SSL settings; for Supabase, confirm you use the correct direct or pooled connection string for Prisma.",
+    };
+  }
+
+  if (name === "PrismaClientRustPanicError") {
+    return {
+      status: 503,
+      message: "Database engine error. Restart the API and try again.",
+    };
+  }
+
+  return null;
+}
+
 export function createApp() {
   const app = express();
 
@@ -33,6 +98,11 @@ export function createApp() {
       _next: express.NextFunction,
     ) => {
       console.error(error);
+      const mapped = mapHandledDatabaseError(error);
+      if (mapped) {
+        response.status(mapped.status).json({ message: mapped.message });
+        return;
+      }
       response.status(500).json({ message: "Internal server error" });
     },
   );

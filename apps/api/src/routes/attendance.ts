@@ -62,7 +62,9 @@ async function getUserScheduleByEmail(email: string) {
 }
 
 function toMinutes(time: string): number {
-  const [hour, minute] = time.split(":").map(Number);
+  const parts = time.split(":").map(Number);
+  const hour = parts[0] ?? 0;
+  const minute = parts[1] ?? 0;
   return hour * 60 + minute;
 }
 
@@ -80,6 +82,96 @@ function getWeekdayKey(date: Date, timeZone: string): string {
   if (label.startsWith("fri")) return "fri";
   if (label.startsWith("sat")) return "sat";
   return "sun";
+}
+
+function parseMonthFromDayKey(dayKey: string): { year: number; month: number; label: string } | null {
+  const match = String(dayKey).match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  if (month < 1 || month > 12) return null;
+  return { year, month, label: `${match[1]}-${match[2]}` };
+}
+
+function monthlyTableName(monthLabel: string): string {
+  // monthLabel is YYYY-MM
+  const safe = monthLabel.replace("-", "_");
+  return `monthly_attendance_${safe}`;
+}
+
+async function ensureMonthlyAttendanceTable(monthLabel: string) {
+  const table = monthlyTableName(monthLabel);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "${table}" (
+      user_id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      full_name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      unique_id TEXT,
+      total_weekdays INTEGER NOT NULL DEFAULT 0,
+      present_days INTEGER NOT NULL DEFAULT 0,
+      late_days INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+function countTotalWeekdaysInMonth(params: {
+  year: number;
+  month: number;
+  timeZone: string;
+  scheduleDays: Set<ScheduleDay>;
+}): number {
+  const start = new Date(Date.UTC(params.year, params.month - 1, 1, 0, 0, 0));
+  const endExclusive = new Date(Date.UTC(params.year, params.month, 1, 0, 0, 0));
+  let total = 0;
+  for (let d = new Date(start); d < endExclusive; d = new Date(d.getTime() + 86400000)) {
+    const weekday = getWeekdayKey(d, params.timeZone);
+    if (
+      weekday === "mon" ||
+      weekday === "tue" ||
+      weekday === "wed" ||
+      weekday === "thu" ||
+      weekday === "fri"
+    ) {
+      if (params.scheduleDays.has(weekday as ScheduleDay)) total += 1;
+    }
+  }
+  return total;
+}
+
+async function upsertMonthlySummary(params: {
+  monthLabel: string;
+  user: { id: string; email: string; fullName: string; role: string; uniqueId: string | null };
+  totalWeekdays: number;
+  incrementPresent: number;
+  incrementLate: number;
+}) {
+  const table = monthlyTableName(params.monthLabel);
+  await prisma.$executeRawUnsafe(
+    `
+    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, late_days, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+      email = EXCLUDED.email,
+      full_name = EXCLUDED.full_name,
+      role = EXCLUDED.role,
+      unique_id = EXCLUDED.unique_id,
+      total_weekdays = GREATEST("${table}".total_weekdays, EXCLUDED.total_weekdays),
+      present_days = "${table}".present_days + $7,
+      late_days = "${table}".late_days + $8,
+      updated_at = NOW();
+    `,
+    params.user.id,
+    params.user.email,
+    params.user.fullName,
+    params.user.role,
+    params.user.uniqueId,
+    params.totalWeekdays,
+    params.incrementPresent,
+    params.incrementLate,
+  );
 }
 
 function hhmmFromDate(date: Date, timeZone: string): string {
@@ -408,6 +500,34 @@ attendanceRouter.post(
       longitude: parsed.data.longitude,
       imageDataUrl: parsed.data.imageDataUrl,
     });
+
+    // Monthly summary table update (one table per month), updated on Time In only.
+    if (parsed.data.type === "Time In") {
+      const month = parseMonthFromDayKey(dayKey);
+      if (month) {
+        const scheduleDays = new Set(schedule.map((s) => s.day));
+        const totalWeekdays = countTotalWeekdaysInMonth({
+          year: month.year,
+          month: month.month,
+          timeZone: env.appTimezone,
+          scheduleDays,
+        });
+        await ensureMonthlyAttendanceTable(month.label);
+        await upsertMonthlySummary({
+          monthLabel: month.label,
+          user: {
+            id: user.id,
+            email: user.email,
+            fullName: user.fullName,
+            role: user.role,
+            uniqueId: user.uniqueId ?? null,
+          },
+          totalWeekdays,
+          incrementPresent: 1,
+          incrementLate: status === "Late" ? 1 : 0,
+        });
+      }
+    }
 
     let emailResult: {
       provider: string;

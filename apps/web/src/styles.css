@@ -954,6 +954,34 @@ button {
 
 .attendance-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.attendance-live-clock {
+  text-align: right;
+  min-width: 0;
+}
+
+.attendance-live-clock-label {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.attendance-live-clock-value {
+  display: block;
+  font-family: ui-monospace, "Cascadia Code", "Segoe UI Mono", monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+  white-space: nowrap;
 }
 
 .attendance-actions .ghost-btn.danger {

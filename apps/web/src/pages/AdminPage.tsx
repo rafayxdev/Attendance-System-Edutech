@@ -4,13 +4,20 @@ import { API_URL, apiRequest } from "../api/client";
 import { clearSession, readSession } from "../auth/session";
 import { AccessGate } from "../components/AccessGate";
 import { MetricCard } from "../components/MetricCard";
+import { formatWallHm12h } from "../lib/timeDisplay";
 import type { AccessPolicy, AttendanceLogRow, AuthSession } from "../types";
 
 interface AdminPageProps {
   onSessionChange: (session: AuthSession | null) => void;
 }
 
-type AdminView = "overview" | "users" | "generator" | "credentials" | "shifts";
+type AdminView =
+  | "overview"
+  | "users"
+  | "generator"
+  | "credentials"
+  | "shifts"
+  | "attendance";
 type WeekdayKey = "mon" | "tue" | "wed" | "thu" | "fri";
 type WeekdaySchedule = {
   day: WeekdayKey;
@@ -104,6 +111,21 @@ type ShiftRow = {
   status: string;
 };
 
+type MonthlyAttendanceRow = {
+  month: string;
+  email: string;
+  fullName: string;
+  role: string;
+  uniqueId: string;
+  totalWeekdays: number;
+  presentDays: number;
+  absentDays: number;
+  lateDays: number;
+  latePenaltyAbsents: number;
+  effectivePresent: number;
+  effectiveAbsent: number;
+};
+
 export function AdminPage({ onSessionChange }: AdminPageProps) {
   const session = readSession();
 
@@ -165,6 +187,7 @@ function AdminContent({
   const [usersBusy, setUsersBusy] = useState(false);
   const [addUserBusy, setAddUserBusy] = useState(false);
   const [addUserMessage, setAddUserMessage] = useState("");
+  const [addUserMessageIsError, setAddUserMessageIsError] = useState(false);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("all-days");
   const [allDaysSchedule, setAllDaysSchedule] = useState({
@@ -203,6 +226,17 @@ function AdminContent({
   const [shiftsData, setShiftsData] = useState<ShiftRow[]>([]);
   const [shiftsBusy, setShiftsBusy] = useState(false);
 
+  const [monthlyMonth, setMonthlyMonth] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [monthlyMonths, setMonthlyMonths] = useState<string[]>([]);
+  const [monthlySearch, setMonthlySearch] = useState("");
+  const [monthlyData, setMonthlyData] = useState<MonthlyAttendanceRow[]>([]);
+  const [monthlyBusy, setMonthlyBusy] = useState(false);
+
   async function loadShifts() {
     setShiftsBusy(true);
     try {
@@ -217,6 +251,60 @@ function AdminContent({
     } finally {
       setShiftsBusy(false);
     }
+  }
+
+  async function loadMonthlyAttendance() {
+    setMonthlyBusy(true);
+    try {
+      const query = new URLSearchParams();
+      query.set("month", monthlyMonth);
+      if (monthlySearch.trim()) query.set("search", monthlySearch.trim());
+      const rows = await apiRequest<MonthlyAttendanceRow[]>(
+        `/admin/monthly-attendance?${query.toString()}`,
+      );
+      setMonthlyData(rows);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setMonthlyBusy(false);
+    }
+  }
+
+  async function loadMonthlyMonths() {
+    try {
+      const months = await apiRequest<string[]>(
+        "/admin/monthly-attendance/months",
+      );
+      setMonthlyMonths(months);
+      if (months.length > 0 && !months.includes(monthlyMonth)) {
+        const first = months[0];
+        if (first !== undefined) setMonthlyMonth(first);
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function exportMonthlyCsv() {
+    const token = sessionStorage.getItem("et_token") || "";
+    const query = new URLSearchParams();
+    query.set("month", monthlyMonth);
+    const response = await fetch(
+      `${API_URL}/admin/monthly-attendance/export-csv?${query.toString()}`,
+      {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      },
+    );
+
+    if (!response.ok) return;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `monthly-attendance-${monthlyMonth}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   async function loadOverview() {
@@ -350,9 +438,11 @@ function AdminContent({
 
   function addScheduleSlot() {
     if (addUserForm.attendanceSchedule.length >= 5) {
+      setAddUserMessageIsError(true);
       setAddUserMessage("You can add maximum 5 custom weekdays.");
       return;
     }
+    setAddUserMessageIsError(false);
     setAddUserMessage("");
     setAddUserForm((prev) => ({
       ...prev,
@@ -365,6 +455,7 @@ function AdminContent({
 
   function applyScheduleToAllWeekdays() {
     setScheduleMode("all-days");
+    setAddUserMessageIsError(false);
     setAddUserMessage("");
   }
 
@@ -388,11 +479,13 @@ function AdminContent({
           }))
         : addUserForm.attendanceSchedule;
     if (schedulePayload.length === 0) {
+      setAddUserMessageIsError(true);
       setAddUserMessage("Add at least one weekday schedule.");
       return;
     }
 
     setAddUserBusy(true);
+    setAddUserMessageIsError(false);
     setAddUserMessage("");
     try {
       await apiRequest<{ success: boolean }>("/admin/users-data", {
@@ -407,6 +500,7 @@ function AdminContent({
         }),
       });
 
+      setAddUserMessageIsError(false);
       setAddUserMessage(
         "User added successfully. Credentials are pending generation.",
       );
@@ -422,6 +516,7 @@ function AdminContent({
       });
       await loadUsersData();
     } catch (error) {
+      setAddUserMessageIsError(true);
       setAddUserMessage(
         error instanceof Error ? error.message : "Failed to add user.",
       );
@@ -683,6 +778,17 @@ function AdminContent({
             }}
           >
             Timing / Shift
+          </button>
+          <button
+            type="button"
+            className={view === "attendance" ? "role-tab active" : "role-tab"}
+            onClick={() => {
+              setView("attendance");
+              void loadMonthlyMonths();
+              void loadMonthlyAttendance();
+            }}
+          >
+            Attendance
           </button>
         </section>
 
@@ -948,6 +1054,7 @@ function AdminContent({
                     onClick={() => {
                       setShowAddUserForm(true);
                       setScheduleMode("all-days");
+                      setAddUserMessageIsError(false);
                       setAddUserMessage("");
                     }}
                   >
@@ -1157,7 +1264,11 @@ function AdminContent({
                 </form>
               )}
               {addUserMessage ? (
-                <div className="notice success">{addUserMessage}</div>
+                <div
+                  className={`notice ${addUserMessageIsError ? "error" : "success"}`}
+                >
+                  {addUserMessage}
+                </div>
               ) : null}
               <section className="filters-bar compact-filters">
                 <input
@@ -1481,8 +1592,8 @@ function AdminContent({
                           <td>{row.role}</td>
                           <td>{row.email}</td>
                           <td>{row.uniqueId}</td>
-                          <td>{row.shiftStart}</td>
-                          <td>{row.shiftEnd}</td>
+                          <td>{formatWallHm12h(row.shiftStart)}</td>
+                          <td>{formatWallHm12h(row.shiftEnd)}</td>
                           <td>{row.timeInAt}</td>
                           <td>{row.timeOutAt}</td>
                           <td>
@@ -1505,6 +1616,108 @@ function AdminContent({
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "attendance" ? (
+          <section className="table-card user-generator-card">
+            <div className="table-head">
+              <h2>Monthly Attendance</h2>
+              <span>{monthlyMonth}</span>
+            </div>
+            <div className="user-generator-body">
+              <section className="filters-bar compact-filters">
+                <input
+                  value={monthlySearch}
+                  onChange={(event) => setMonthlySearch(event.target.value)}
+                  placeholder="Search users by name, role, id, email"
+                  className="search-input"
+                />
+                <select
+                  value={monthlyMonth}
+                  onChange={(event) => setMonthlyMonth(event.target.value)}
+                  className="date-input"
+                >
+                  {monthlyMonths.length === 0 ? (
+                    <option value={monthlyMonth}>{monthlyMonth}</option>
+                  ) : (
+                    monthlyMonths.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  className="primary-btn slim"
+                  onClick={() => void loadMonthlyAttendance()}
+                  disabled={monthlyBusy}
+                >
+                  Search
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => void exportMonthlyCsv()}
+                >
+                  Export CSV
+                </button>
+              </section>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Role</th>
+                      <th>Gmail</th>
+                      <th>Total Weekdays</th>
+                      <th>Present</th>
+                      <th>Absent</th>
+                      <th>Late</th>
+                      <th>Late→Absent</th>
+                      <th>Effective Present</th>
+                      <th>Effective Absent</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyData.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="empty-row">
+                          No monthly attendance found.
+                        </td>
+                      </tr>
+                    ) : (
+                      monthlyData.map((row) => (
+                        <tr key={`${row.month}-${row.email}`}>
+                          <td>
+                            <strong>{row.fullName}</strong>
+                            <small>{row.uniqueId}</small>
+                          </td>
+                          <td>{row.role}</td>
+                          <td>{row.email}</td>
+                          <td>{row.totalWeekdays}</td>
+                          <td>{row.presentDays}</td>
+                          <td>{row.absentDays}</td>
+                          <td>{row.lateDays}</td>
+                          <td>{row.latePenaltyAbsents}</td>
+                          <td>
+                            <span className="badge green">{row.effectivePresent}</span>
+                          </td>
+                          <td>
+                            <span className="badge amber">{row.effectiveAbsent}</span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="notice info">
+                3 Late days are counted as 1 Absent day in Effective totals.
               </div>
             </div>
           </section>

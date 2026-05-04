@@ -114,6 +114,70 @@ function weekdayKey(
   return "sun";
 }
 
+function parseMonthParam(value: string | undefined | null): {
+  year: number;
+  month: number;
+  label: string;
+} | null {
+  const input = String(value ?? "").trim();
+  const match = input.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  if (month < 1 || month > 12) return null;
+  return { year, month, label: `${match[1]}-${match[2]}` };
+}
+
+function monthDateRangeUTC(params: { year: number; month: number }): {
+  start: Date;
+  endExclusive: Date;
+} {
+  // Month is 1-based here.
+  const start = new Date(Date.UTC(params.year, params.month - 1, 1, 0, 0, 0));
+  const endExclusive = new Date(
+    Date.UTC(params.year, params.month, 1, 0, 0, 0),
+  );
+  return { start, endExclusive };
+}
+
+function listMonthDayKeys(params: {
+  year: number;
+  month: number;
+  timeZone: string;
+}): Array<{ dayKey: string; weekday: ReturnType<typeof weekdayKey> }> {
+  const { start, endExclusive } = monthDateRangeUTC(params);
+  const days: Array<{ dayKey: string; weekday: ReturnType<typeof weekdayKey> }> =
+    [];
+  for (
+    let d = new Date(start);
+    d < endExclusive;
+    d = new Date(d.getTime() + 86400000)
+  ) {
+    const dayKey = formatDayKey(d);
+    days.push({ dayKey, weekday: weekdayKey(d, params.timeZone) });
+  }
+  return days;
+}
+
+function monthlyTableName(monthLabel: string): string {
+  const safe = monthLabel.replace("-", "_");
+  return `monthly_attendance_${safe}`;
+}
+
+async function monthlyTableExists(monthLabel: string): Promise<boolean> {
+  const table = monthlyTableName(monthLabel);
+  const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+    `
+    SELECT EXISTS (
+      SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = $1
+    ) AS exists;
+    `,
+    table,
+  );
+  return Boolean(rows[0]?.exists);
+}
+
 function parseCredentialPayload(payload: unknown): CredentialPayload | null {
   if (!payload || typeof payload !== "object") return null;
 
@@ -178,7 +242,9 @@ function hasInvalidScheduleRange(
   schedule: Array<{ day: string; startTime: string; endTime: string }>,
 ): boolean {
   const toMinutes = (value: string): number => {
-    const [hour, minute] = value.split(":").map(Number);
+    const parts = value.split(":").map(Number);
+    const hour = parts[0] ?? 0;
+    const minute = parts[1] ?? 0;
     return hour * 60 + minute;
   };
   return schedule.some(
@@ -731,6 +797,180 @@ adminRouter.get(
     });
 
     response.json(rows);
+  },
+);
+
+adminRouter.get(
+  "/monthly-attendance",
+  async (request: AuthenticatedRequest, response) => {
+    const monthParam = parseMonthParam(request.query.month as string | undefined);
+    if (!monthParam) {
+      response.status(400).json({ message: "Invalid month. Use YYYY-MM." });
+      return;
+    }
+
+    const search = (request.query.search as string | undefined)?.trim() ?? "";
+    const exists = await monthlyTableExists(monthParam.label);
+    if (!exists) {
+      response.json([]);
+      return;
+    }
+
+    const table = monthlyTableName(monthParam.label);
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        month: string;
+        email: string;
+        fullName: string;
+        role: string;
+        uniqueId: string | null;
+        totalWeekdays: number;
+        presentDays: number;
+        absentDays: number;
+        lateDays: number;
+        latePenaltyAbsents: number;
+        effectivePresent: number;
+        effectiveAbsent: number;
+      }>
+    >(
+      `
+      SELECT
+        $1::text AS month,
+        email,
+        full_name AS "fullName",
+        role,
+        unique_id AS "uniqueId",
+        total_weekdays AS "totalWeekdays",
+        present_days AS "presentDays",
+        GREATEST(0, total_weekdays - present_days) AS "absentDays",
+        late_days AS "lateDays",
+        FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
+        GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
+        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+      FROM "${table}"
+      WHERE ($2 = '' OR email ILIKE '%' || $2 || '%' OR full_name ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR COALESCE(unique_id,'') ILIKE '%' || $2 || '%')
+      ORDER BY full_name ASC
+      LIMIT 5000;
+      `,
+      monthParam.label,
+      search,
+    );
+    response.json(rows);
+  },
+);
+
+adminRouter.get(
+  "/monthly-attendance/months",
+  async (_request: AuthenticatedRequest, response) => {
+    const rows = await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+      `
+      SELECT tablename
+      FROM pg_tables
+      WHERE schemaname = 'public'
+        AND tablename LIKE 'monthly_attendance_%'
+      ORDER BY tablename DESC
+      LIMIT 240;
+      `,
+    );
+    const months = rows
+      .map((row) => row.tablename.replace("monthly_attendance_", ""))
+      .map((value) => value.replace("_", "-"))
+      .filter((value) => /^\d{4}-\d{2}$/.test(value));
+    response.json(months);
+  },
+);
+
+adminRouter.get(
+  "/monthly-attendance/export-csv",
+  async (request: AuthenticatedRequest, response) => {
+    const monthParam = parseMonthParam(request.query.month as string | undefined);
+    if (!monthParam) {
+      response.status(400).json({ message: "Invalid month. Use YYYY-MM." });
+      return;
+    }
+
+    const exists = await monthlyTableExists(monthParam.label);
+    if (!exists) {
+      response.status(404).json({ message: "No monthly table for this month." });
+      return;
+    }
+    const table = monthlyTableName(monthParam.label);
+    const rows = await prisma.$queryRawUnsafe<
+      Array<{
+        month: string;
+        fullName: string;
+        email: string;
+        role: string;
+        uniqueId: string | null;
+        totalWeekdays: number;
+        presentDays: number;
+        absentDays: number;
+        lateDays: number;
+        latePenaltyAbsents: number;
+        effectivePresent: number;
+        effectiveAbsent: number;
+      }>
+    >(
+      `
+      SELECT
+        $1::text AS month,
+        full_name AS "fullName",
+        email,
+        role,
+        unique_id AS "uniqueId",
+        total_weekdays AS "totalWeekdays",
+        present_days AS "presentDays",
+        GREATEST(0, total_weekdays - present_days) AS "absentDays",
+        late_days AS "lateDays",
+        FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
+        GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
+        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+      FROM "${table}"
+      ORDER BY full_name ASC
+      LIMIT 5000;
+      `,
+      monthParam.label,
+    );
+
+    const header = [
+      "Month",
+      "Full Name",
+      "Gmail",
+      "Role",
+      "Unique ID",
+      "Total Weekdays",
+      "Present",
+      "Absent",
+      "Late",
+      "Late Penalty Absents",
+      "Effective Present",
+      "Effective Absent",
+    ];
+    const lines = [header.join(",")];
+    for (const row of rows) {
+      const values = [
+        row.month,
+        row.fullName,
+        row.email,
+        row.role,
+        row.uniqueId,
+        row.totalWeekdays,
+        row.presentDays,
+        row.absentDays,
+        row.lateDays,
+        row.latePenaltyAbsents,
+        row.effectivePresent,
+        row.effectiveAbsent,
+      ].map((value) => `\"${String(value).replace(/\"/g, '\"\"')}\"`);
+      lines.push(values.join(","));
+    }
+
+    response.setHeader("Content-Type", "text/csv");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="monthly-attendance-${monthParam.label}.csv"`,
+    );
+    response.send(lines.join("\n"));
   },
 );
 
