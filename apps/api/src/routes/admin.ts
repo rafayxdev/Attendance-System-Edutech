@@ -83,6 +83,7 @@ const allowedRoles = new Set([
 ]);
 const credentialAuditAction = "USER_CREDENTIAL_GENERATED";
 const scheduleAuditAction = "USER_ATTENDANCE_SCHEDULE";
+const passwordChangeAuditAction = "USER_CREDENTIAL_PASSWORD_CHANGED";
 
 type CredentialPayload = {
   email: string;
@@ -250,6 +251,208 @@ function hasInvalidScheduleRange(
   return schedule.some(
     (row) => toMinutes(row.startTime) >= toMinutes(row.endTime),
   );
+}
+
+/** Removes user row plus attendance, credential/schedule audit logs, and monthly summary rows. */
+async function purgeUserAndAllRecords(
+  normalizedEmail: string,
+): Promise<"deleted" | "not_found"> {
+  const user = await prisma.user.findUnique({
+    where: { email: normalizedEmail },
+  });
+  if (!user) return "not_found";
+
+  const credentialLogs = await prisma.auditLog.findMany({
+    where: { action: credentialAuditAction },
+    select: { id: true, payload: true },
+    take: 5000,
+  });
+  const credentialLogIds = credentialLogs
+    .filter((log) => {
+      const payload = parseCredentialPayload(log.payload);
+      return payload?.email.toLowerCase() === normalizedEmail;
+    })
+    .map((log) => log.id);
+
+  const passwordChangeLogs = await prisma.auditLog.findMany({
+    where: { action: passwordChangeAuditAction },
+    select: { id: true, payload: true },
+    take: 5000,
+  });
+  const passwordChangeLogIds = passwordChangeLogs
+    .filter((log) => {
+      if (!log.payload || typeof log.payload !== "object") return false;
+      const payload = log.payload as Record<string, unknown>;
+      return (
+        typeof payload.email === "string" &&
+        payload.email.trim().toLowerCase() === normalizedEmail
+      );
+    })
+    .map((log) => log.id);
+
+  const scheduleLogs = await prisma.auditLog.findMany({
+    where: { action: scheduleAuditAction },
+    select: { id: true, payload: true },
+    take: 5000,
+  });
+  const scheduleLogIds = scheduleLogs
+    .filter((log) => {
+      const payload = parseSchedulePayload(log.payload);
+      return payload?.email === normalizedEmail;
+    })
+    .map((log) => log.id);
+
+  const monthRows = await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'monthly_attendance_%'`,
+  );
+  const safeMonthlyTables = monthRows
+    .map((row) => row.tablename)
+    .filter((name) => /^monthly_attendance_[0-9]{4}_[0-9]{2}$/.test(name));
+
+  const auditIds = [
+    ...new Set([...credentialLogIds, ...passwordChangeLogIds, ...scheduleLogIds]),
+  ];
+
+  await prisma.$transaction(async (tx) => {
+    await tx.attendanceLog.deleteMany({ where: { userId: user.id } });
+
+    if (auditIds.length > 0) {
+      await tx.auditLog.deleteMany({ where: { id: { in: auditIds } } });
+    }
+
+    for (const table of safeMonthlyTables) {
+      await tx.$executeRawUnsafe(
+        `DELETE FROM "${table}" WHERE user_id = $1`,
+        user.id,
+      );
+    }
+
+    await tx.user.delete({ where: { id: user.id } });
+  });
+
+  return "deleted";
+}
+
+/** Keeps denormalized copies (attendance category, email logs, monthly rows, audit payloads) in sync after profile edits. */
+async function propagateUserProfileChanges(params: {
+  userId: string;
+  previousEmail: string;
+  nextEmail: string;
+  nextFullName: string;
+  nextRole: string;
+  nextUniqueId: string | null;
+}): Promise<void> {
+  const {
+    userId,
+    previousEmail,
+    nextEmail,
+    nextFullName,
+    nextRole,
+    nextUniqueId,
+  } = params;
+  const prevKey = previousEmail.trim().toLowerCase();
+
+  await prisma.attendanceLog.updateMany({
+    where: { userId },
+    data: { category: nextRole },
+  });
+
+  await prisma.emailLog.updateMany({
+    where: {
+      attendance: { userId },
+    },
+    data: {
+      recipientEmail: nextEmail,
+      subject: `Attendance Receipt - ${nextFullName}`,
+    },
+  });
+
+  const monthRows = await prisma.$queryRawUnsafe<Array<{ tablename: string }>>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'monthly_attendance_%'`,
+  );
+  const safeMonthlyTables = monthRows
+    .map((row) => row.tablename)
+    .filter((name) => /^monthly_attendance_[0-9]{4}_[0-9]{2}$/.test(name));
+
+  for (const table of safeMonthlyTables) {
+    await prisma.$executeRawUnsafe(
+      `UPDATE "${table}" SET email = $1, full_name = $2, role = $3, unique_id = $4 WHERE user_id = $5`,
+      nextEmail,
+      nextFullName,
+      nextRole,
+      nextUniqueId,
+      userId,
+    );
+  }
+
+  const credentialLogs = await prisma.auditLog.findMany({
+    where: { action: credentialAuditAction },
+    select: { id: true, payload: true },
+    take: 5000,
+  });
+  for (const log of credentialLogs) {
+    const payload = parseCredentialPayload(log.payload);
+    if (!payload) continue;
+    if (payload.email.toLowerCase() !== prevKey) continue;
+    await prisma.auditLog.update({
+      where: { id: log.id },
+      data: {
+        payload: {
+          email: nextEmail,
+          fullName: nextFullName,
+          role: nextRole,
+          uniqueId: nextUniqueId,
+          password: payload.password,
+          status: payload.status,
+        },
+      },
+    });
+  }
+
+  const passwordLogs = await prisma.auditLog.findMany({
+    where: { action: passwordChangeAuditAction },
+    select: { id: true, payload: true },
+    take: 5000,
+  });
+  for (const log of passwordLogs) {
+    if (!log.payload || typeof log.payload !== "object") continue;
+    const p = log.payload as Record<string, unknown>;
+    const em =
+      typeof p.email === "string" ? p.email.trim().toLowerCase() : "";
+    if (em !== prevKey) continue;
+    await prisma.auditLog.update({
+      where: { id: log.id },
+      data: {
+        payload: {
+          email: nextEmail,
+          fullName: nextFullName,
+          role: nextRole,
+          uniqueId: nextUniqueId,
+        },
+      },
+    });
+  }
+
+  if (nextEmail.trim().toLowerCase() !== prevKey) {
+    const schLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      select: { id: true, payload: true },
+      take: 5000,
+    });
+    for (const log of schLogs) {
+      const sp = parseSchedulePayload(log.payload);
+      if (!sp || sp.email !== prevKey) continue;
+      await prisma.auditLog.update({
+        where: { id: log.id },
+        data: {
+          payload: {
+            email: nextEmail.trim().toLowerCase(),
+            schedule: sp.schedule,
+          },
+        },
+      });
+    }
+  }
 }
 
 adminRouter.post(
@@ -615,6 +818,15 @@ adminRouter.put(
     const scheduleToSave =
       parsed.data.attendanceSchedule ?? latestSchedule?.schedule ?? [];
 
+    await propagateUserProfileChanges({
+      userId: updated.id,
+      previousEmail: currentEmail,
+      nextEmail: updated.email,
+      nextFullName: updated.fullName,
+      nextRole: updated.role,
+      nextUniqueId: updated.uniqueId,
+    });
+
     if (scheduleToSave.length > 0 || nextEmail !== currentEmail) {
       await prisma.auditLog.create({
         data: {
@@ -646,13 +858,11 @@ adminRouter.delete(
   "/users-data/:email",
   async (request: AuthenticatedRequest, response) => {
     const email = String(request.params.email).trim().toLowerCase();
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (!existing) {
+    const result = await purgeUserAndAllRecords(email);
+    if (result === "not_found") {
       response.status(404).json({ message: "User not found." });
       return;
     }
-
-    await prisma.user.delete({ where: { email } });
     response.json({ success: true });
   },
 );
@@ -1060,53 +1270,11 @@ adminRouter.delete(
   "/users-credentials/:email",
   async (request: AuthenticatedRequest, response) => {
     const email = String(request.params.email).trim().toLowerCase();
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (!existing) {
+    const result = await purgeUserAndAllRecords(email);
+    if (result === "not_found") {
       response.status(404).json({ message: "User not found." });
       return;
     }
-
-    const credentialLogs = await prisma.auditLog.findMany({
-      where: { action: credentialAuditAction },
-      select: { id: true, payload: true },
-      take: 5000,
-    });
-    const passwordChangeLogs = await prisma.auditLog.findMany({
-      where: { action: "USER_CREDENTIAL_PASSWORD_CHANGED" },
-      select: { id: true, payload: true },
-      take: 5000,
-    });
-
-    const credentialLogIds = credentialLogs
-      .filter((log) => {
-        const payload = parseCredentialPayload(log.payload);
-        return payload?.email.toLowerCase() === email;
-      })
-      .map((log) => log.id);
-
-    const passwordChangeLogIds = passwordChangeLogs
-      .filter((log) => {
-        if (!log.payload || typeof log.payload !== "object") return false;
-        const payload = log.payload as Record<string, unknown>;
-        return (
-          typeof payload.email === "string" &&
-          payload.email.trim().toLowerCase() === email
-        );
-      })
-      .map((log) => log.id);
-
-    await prisma.$transaction(async (tx) => {
-      if (credentialLogIds.length > 0) {
-        await tx.auditLog.deleteMany({ where: { id: { in: credentialLogIds } } });
-      }
-      if (passwordChangeLogIds.length > 0) {
-        await tx.auditLog.deleteMany({
-          where: { id: { in: passwordChangeLogIds } },
-        });
-      }
-      await tx.user.delete({ where: { email } });
-    });
-
     response.json({ success: true });
   },
 );
