@@ -308,7 +308,6 @@ function AttendanceContent({
         </form>
 
         <footer className="auth-footer">
-          <span>IP: {access.clientIp}</span>
           <span>{session.role}</span>
         </footer>
       </main>

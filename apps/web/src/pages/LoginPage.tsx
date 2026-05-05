@@ -4,7 +4,7 @@ import { apiRequest } from "../api/client";
 import { clearSession, saveSession } from "../auth/session";
 import type { AccessPolicy, AuthSession, RoleTab } from "../types";
 import { AccessGate } from "../components/AccessGate";
-import { ImageCapture } from "../components/ImageCapture";
+import logoUrl from "../images/EduTech Logo.png";
 
 interface LoginPageProps {
   onSessionChange: (session: AuthSession | null) => void;
@@ -25,15 +25,64 @@ type GuestResponse = {
   attendanceId: string;
 };
 
-const USER_LOGIN_ROLES = [
-  { value: "internee", label: "Internee" },
-  { value: "student", label: "Student" },
-  { value: "human resource", label: "HR Manager" },
-  { value: "chief executive", label: "CEO" },
-  { value: "employee", label: "Employee" },
-  { value: "faculty member", label: "Faculty Member" },
-  { value: "visiting faculty", label: "Visiting Faculty" },
-] as const;
+function EyeIcon({ open }: { open: boolean }) {
+  return open ? (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M2.5 12s3.5-7 9.5-7 9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+    </svg>
+  ) : (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M3.5 6.5 20.5 17.5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M2.5 12s3.5-7 9.5-7c2.1 0 4 0.8 5.6 2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M21.5 12s-3.5 7-9.5 7c-2.2 0-4.2-0.9-5.9-2.2"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M10.1 10.1a2.7 2.7 0 0 0 3.8 3.8"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
 
 export function LoginPage({ onSessionChange }: LoginPageProps) {
   return (
@@ -58,14 +107,13 @@ function LoginPageContent({
 }) {
   const navigate = useNavigate();
   const [role, setRole] = useState<RoleTab>("user");
-  const [selectedLoginRole, setSelectedLoginRole] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [guestPurpose, setGuestPurpose] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
   const [guestType, setGuestType] = useState<"Time In" | "Time Out">("Time In");
-  const [guestImage, setGuestImage] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [statusType, setStatusType] = useState<
     "info" | "error" | "success" | ""
@@ -105,7 +153,6 @@ function LoginPageContent({
           clientIp: access.clientIp,
           latitude: access.latitude,
           longitude: access.longitude,
-          imageDataUrl: guestImage || null,
         }),
       });
 
@@ -115,7 +162,6 @@ function LoginPageContent({
         setGuestPurpose("");
         setGuestEmail("");
         setGuestType("Time In");
-        setGuestImage("");
       }
     } catch (error) {
       showMessage(
@@ -130,16 +176,6 @@ function LoginPageContent({
   async function handleLoginSubmit(event: React.FormEvent) {
     event.preventDefault();
 
-    if (role === "user" && !selectedLoginRole) {
-      showMessage("Please select your user role.", "error");
-      return;
-    }
-
-    if (role === "admin" && selectedLoginRole !== "admin") {
-      showMessage("Please select Admin role for admin login.", "error");
-      return;
-    }
-
     setBusy(true);
     try {
       const result = await apiRequest<LoginResponse>("/auth/login", {
@@ -148,7 +184,6 @@ function LoginPageContent({
           email: email.trim().toLowerCase(),
           password,
           role: role === "admin" ? "admin" : "user",
-          selectedRole: role === "admin" ? "admin" : selectedLoginRole,
           clientIp: access.clientIp,
           latitude: access.latitude ?? undefined,
           longitude: access.longitude ?? undefined,
@@ -190,15 +225,17 @@ function LoginPageContent({
       <div className="bg-blob blob-a" />
       <div className="bg-blob blob-b" />
       <main className="auth-card glass-card">
-        <div className="brand-block">
-          <div className="brand-mark">🎓</div>
-          <div>
-            <h1>EduTech Solutions</h1>
-            <p>Secure Digital Attendance Portal</p>
-          </div>
+        <div className="brand-block login-brand-block">
+          <img
+            className="brand-logo login-brand-logo"
+            src={logoUrl}
+            alt="EduTech Solutions"
+          />
+          <h1 className="login-title">The EduTech Solutions</h1>
+          <p className="login-subtitle">Secure Portal Login</p>
         </div>
 
-        <div className="role-tabs">
+        <div className="role-tabs login-role-tabs">
           {(["user", "guest", "admin"] as RoleTab[]).map((tab) => (
             <button
               key={tab}
@@ -206,7 +243,6 @@ function LoginPageContent({
               className={tab === role ? "role-tab active" : "role-tab"}
               onClick={() => {
                 setRole(tab);
-                setSelectedLoginRole(tab === "admin" ? "admin" : "");
                 setStatusMessage("");
                 setStatusType("");
               }}
@@ -236,51 +272,26 @@ function LoginPageContent({
                 </label>
                 <label className="field-label">
                   Password
-                  <input
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    type="password"
-                    placeholder="Enter your password"
-                    autoComplete="current-password"
-                    required
-                  />
-                </label>
-
-                <label className="field-label">
-                  {role === "admin" ? "Role" : "Select Your Role"}
-                  <select
-                    value={role === "admin" ? "admin" : selectedLoginRole}
-                    onChange={(event) =>
-                      setSelectedLoginRole(event.target.value)
-                    }
-                    required
-                    disabled={role === "admin"}
-                  >
-                    {role === "admin" ? (
-                      <option value="admin">Admin</option>
-                    ) : (
-                      <>
-                        <option value="">Choose role</option>
-                        {USER_LOGIN_ROLES.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                </label>
-
-                <div className="type-panel login-mode-panel">
-                  <div className="type-label">
-                    {role === "admin" ? "Admin Access" : "User Access"}
+                  <div className="password-field">
+                    <input
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Enter your password"
+                      autoComplete="current-password"
+                      required
+                    />
+                    <button
+                      type="button"
+                      className="password-toggle-btn"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      <EyeIcon open={!showPassword} />
+                    </button>
                   </div>
-                  <p className="mode-note">
-                    {role === "admin"
-                      ? "Use your admin credentials to manage users, credentials, and reports."
-                      : "Use your assigned credentials to mark attendance and check status."}
-                  </p>
-                </div>
+                </label>
               </>
             ) : (
               <>
@@ -336,7 +347,6 @@ function LoginPageContent({
                     </button>
                   </div>
                 </div>
-                <ImageCapture value={guestImage} onChange={setGuestImage} />
               </>
             )}
           </div>
@@ -349,15 +359,13 @@ function LoginPageContent({
             {busy ? "Processing..." : isGuest ? "Submit Attendance" : "Sign In"}
           </button>
         </form>
-
-        <div className="auth-footer">
-          <span>IP: {access.clientIp}</span>
-          <span>
-            {access.policy
-              ? `${access.policy.accessProfile} profile`
-              : "Access profile ready"}
-          </span>
-        </div>
+        {!isGuest ? (
+          <p className="login-disclaimer">
+            Access is restricted to authorized personnel.
+            <br />
+            Must be connected to University Wi‑Fi.
+          </p>
+        ) : null}
       </main>
     </div>
   );

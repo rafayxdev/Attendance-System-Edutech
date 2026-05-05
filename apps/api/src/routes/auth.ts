@@ -67,12 +67,7 @@ authRouter.post("/login", async (request, response) => {
   }
 
   const userRole = canonicalRole(user.role);
-  const selectedRoleKey = canonicalRole(selectedRole);
-
-  if (!selectedRoleKey) {
-    response.status(400).json({ message: "Please select a role to continue." });
-    return;
-  }
+  const selectedRoleKey = canonicalRole(selectedRole) || userRole;
 
   if (role === "admin" && userRole !== "admin") {
     response.status(403).json({ message: "You do not have admin access." });
@@ -82,7 +77,7 @@ authRouter.post("/login", async (request, response) => {
   if (role === "admin" && selectedRoleKey !== "admin") {
     response
       .status(400)
-      .json({ message: "Please select Admin role to sign in." });
+      .json({ message: "Please use valid admin credentials to sign in." });
     return;
   }
 

@@ -7,6 +7,7 @@ import { AccessGate } from "../components/AccessGate";
 import { MetricCard } from "../components/MetricCard";
 import { formatWallHm12h } from "../lib/timeDisplay";
 import type { AccessPolicy, AttendanceLogRow, AuthSession } from "../types";
+import logoUrl from "../images/EduTech Logo.png";
 
 interface AdminPageProps {
   onSessionChange: (session: AuthSession | null) => void;
@@ -35,6 +36,46 @@ const USER_ROLE_OPTIONS = [
   { value: "employee", label: "Employee" },
   { value: "human resource", label: "HR Manager" },
 ] as const;
+
+const OVERVIEW_ROLE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "All roles" },
+  ...USER_ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+  { value: "Guest", label: "Guest" },
+];
+
+function formatOverviewPeriodSummary(
+  mode: "today" | "yesterday" | "picked",
+  datePick: string,
+  roleValue: string,
+  searchQuery: string,
+): string {
+  const shortDate: Intl.DateTimeFormatOptions = {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  };
+  let period: string;
+  if (mode === "picked" && datePick) {
+    const d = new Date(`${datePick}T12:00:00`);
+    period = d.toLocaleDateString(undefined, {
+      weekday: "long",
+      ...shortDate,
+    });
+  } else if (mode === "yesterday") {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    period = `Yesterday · ${d.toLocaleDateString(undefined, shortDate)}`;
+  } else {
+    const d = new Date();
+    period = `Today · ${d.toLocaleDateString(undefined, shortDate)}`;
+  }
+  const roleLabel =
+    OVERVIEW_ROLE_FILTER_OPTIONS.find((o) => o.value === roleValue)?.label ??
+    "All roles";
+  let line = `Showing attendance for ${period} · ${roleLabel}`;
+  if (searchQuery) line += ` · search “${searchQuery}”`;
+  return line;
+}
 
 const WEEKDAY_OPTIONS: Array<{ value: WeekdayKey; label: string }> = [
   { value: "mon", label: "Monday" },
@@ -155,6 +196,15 @@ type DetailUserEditState = {
   attendanceSchedule: WeekdaySchedule[];
 };
 
+type ConfirmModalState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  resolve: (confirmed: boolean) => void;
+};
+
 type CredentialRow = {
   email: string;
   fullName: string;
@@ -241,8 +291,18 @@ function AdminContent({
   });
   const [logs, setLogs] = useState<AttendanceLogRow[]>([]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"today" | "yesterday" | "all">("today");
-  const [date, setDate] = useState("");
+  const [overviewDayMode, setOverviewDayMode] = useState<
+    "today" | "yesterday" | "picked"
+  >("today");
+  const [overviewDatePick, setOverviewDatePick] = useState("");
+  const [showOverviewDateInput, setShowOverviewDateInput] = useState(false);
+  const [overviewRoleFilter, setOverviewRoleFilter] = useState("");
+  const [overviewAppliedLine, setOverviewAppliedLine] = useState<string | null>(
+    null,
+  );
+  const [exportingView, setExportingView] = useState<AdminView | null>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null);
+  const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshBusy, setRefreshBusy] = useState(false);
@@ -252,6 +312,7 @@ function AdminContent({
   const [generateMessage, setGenerateMessage] = useState("");
 
   const [usersSearch, setUsersSearch] = useState("");
+  const [usersRoleFilter, setUsersRoleFilter] = useState("");
   const [usersData, setUsersData] = useState<UserDataRow[]>([]);
   const [usersBusy, setUsersBusy] = useState(false);
   const [addUserBusy, setAddUserBusy] = useState(false);
@@ -283,6 +344,7 @@ function AdminContent({
     useState(false);
 
   const [credentialsSearch, setCredentialsSearch] = useState("");
+  const [credentialsRoleFilter, setCredentialsRoleFilter] = useState("");
   const [credentialsData, setCredentialsData] = useState<CredentialRow[]>([]);
   const [credentialsBusy, setCredentialsBusy] = useState(false);
   const [credentialsListPage, setCredentialsListPage] = useState(1);
@@ -294,6 +356,7 @@ function AdminContent({
   const [passwordMessage, setPasswordMessage] = useState("");
 
   const [shiftsSearch, setShiftsSearch] = useState("");
+  const [shiftsRoleFilter, setShiftsRoleFilter] = useState("");
   const [shiftsData, setShiftsData] = useState<ShiftRow[]>([]);
   const [shiftsBusy, setShiftsBusy] = useState(false);
   const [shiftsListPage, setShiftsListPage] = useState(1);
@@ -306,6 +369,7 @@ function AdminContent({
   });
   const [monthlyMonths, setMonthlyMonths] = useState<string[]>([]);
   const [monthlySearch, setMonthlySearch] = useState("");
+  const [monthlyRoleFilter, setMonthlyRoleFilter] = useState("");
   const [monthlyData, setMonthlyData] = useState<MonthlyAttendanceRow[]>([]);
   const [monthlyBusy, setMonthlyBusy] = useState(false);
   const [monthlyListPage, setMonthlyListPage] = useState(1);
@@ -316,6 +380,7 @@ function AdminContent({
     try {
       const query = new URLSearchParams();
       if (shiftsSearch.trim()) query.set("search", shiftsSearch.trim());
+      if (shiftsRoleFilter.trim()) query.set("role", shiftsRoleFilter.trim());
       const rows = await apiRequest<ShiftRow[]>(
         `/admin/shifts-today?${query.toString()}`,
       );
@@ -334,6 +399,7 @@ function AdminContent({
       const query = new URLSearchParams();
       query.set("month", monthlyMonth);
       if (monthlySearch.trim()) query.set("search", monthlySearch.trim());
+      if (monthlyRoleFilter.trim()) query.set("role", monthlyRoleFilter.trim());
       const rows = await apiRequest<MonthlyAttendanceRow[]>(
         `/admin/monthly-attendance?${query.toString()}`,
       );
@@ -361,29 +427,220 @@ function AdminContent({
     }
   }
 
-  async function exportMonthlyCsv() {
-    const token = sessionStorage.getItem("et_token") || "";
-    const query = new URLSearchParams();
-    query.set("month", monthlyMonth);
-    const response = await fetch(
-      `${API_URL}/admin/monthly-attendance/export-csv?${query.toString()}`,
-      {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      },
-    );
+  function csvEscape(value: unknown): string {
+    const text = String(value ?? "");
+    return `"${text.replace(/"/g, '""')}"`;
+  }
 
-    if (!response.ok) return;
-
-    const blob = await response.blob();
+  function downloadCsvFile(filename: string, header: string[], rows: string[][]) {
+    const lines = [header.map(csvEscape).join(",")];
+    for (const row of rows) {
+      lines.push(row.map(csvEscape).join(","));
+    }
+    const csv = `\uFEFF${lines.join("\n")}`;
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `monthly-attendance-${monthlyMonth}.csv`;
+    link.download = filename;
     link.click();
     URL.revokeObjectURL(url);
   }
 
+  function requestConfirmation(config: {
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    danger?: boolean;
+  }): Promise<boolean> {
+    return new Promise((resolve) => {
+      setConfirmModal({
+        title: config.title,
+        message: config.message,
+        confirmLabel: config.confirmLabel ?? "Confirm",
+        cancelLabel: config.cancelLabel ?? "Cancel",
+        danger: config.danger ?? false,
+        resolve,
+      });
+    });
+  }
+
+  function closeConfirmModal(confirmed: boolean) {
+    if (!confirmModal) return;
+    confirmModal.resolve(confirmed);
+    setConfirmModal(null);
+  }
+
+  async function handleExportCsv(target: Extract<AdminView, "overview" | "users" | "credentials" | "shifts" | "attendance">) {
+    if (exportingView) return;
+
+    let filterSummary = "No extra filters";
+    let count = 0;
+    if (target === "overview") {
+      const period =
+        overviewDayMode === "picked" && overviewDatePick
+          ? `Date: ${overviewDatePick}`
+          : overviewDayMode === "yesterday"
+            ? "Period: Yesterday"
+            : "Period: Today";
+      const role = overviewRoleFilter || "All roles";
+      const query = search.trim() || "none";
+      count = logs.length;
+      filterSummary = `${period} | Role: ${role} | Search: ${query}`;
+    } else if (target === "users") {
+      count = usersData.length;
+      filterSummary = `Role: ${usersRoleFilter || "All roles"} | Search: ${
+        usersSearch.trim() || "none"
+      }`;
+    } else if (target === "credentials") {
+      count = credentialsData.length;
+      filterSummary = `Role: ${credentialsRoleFilter || "All roles"} | Search: ${
+        credentialsSearch.trim() || "none"
+      }`;
+    } else if (target === "shifts") {
+      count = shiftsData.length;
+      filterSummary = `Role: ${shiftsRoleFilter || "All roles"} | Search: ${
+        shiftsSearch.trim() || "none"
+      }`;
+    } else {
+      count = monthlyData.length;
+      filterSummary = `Month: ${monthlyMonth} | Role: ${
+        monthlyRoleFilter || "All roles"
+      } | Search: ${monthlySearch.trim() || "none"}`;
+    }
+
+    const confirmed = await requestConfirmation({
+      title: `Export CSV for ${target.toUpperCase()}?`,
+      message: `Selected filters:\n${filterSummary}\n\nRows to export: ${count}`,
+      confirmLabel: "Confirm Export",
+      cancelLabel: "Cancel",
+    });
+    if (!confirmed) return;
+
+    setExportingView(target);
+    try {
+      if (target === "overview") {
+        downloadCsvFile(
+          "overview-attendance-logs.csv",
+          ["Time", "Unique ID", "Name", "Role", "Type", "Status", "Image"],
+          logs.map((row) => [
+            row.timestamp.time,
+            row.uniqueId,
+            row.fullName,
+            row.category,
+            row.type,
+            row.status,
+            row.hasImage ? "Yes" : "No",
+          ]),
+        );
+      } else if (target === "users") {
+        downloadCsvFile(
+          "users-data.csv",
+          ["Gmail", "Generated", "Role", "Name", "Unique ID", "Active"],
+          usersData.map((row) => [
+            row.email,
+            row.generated ? "TRUE" : "FALSE",
+            row.role,
+            row.fullName,
+            row.uniqueId,
+            row.isActive ? "Yes" : "No",
+          ]),
+        );
+      } else if (target === "credentials") {
+        downloadCsvFile(
+          "user-credentials.csv",
+          [
+            "Gmail",
+            "Password",
+            "Role",
+            "Name",
+            "Unique ID",
+            "Status",
+            "Generated At",
+            "Generated By",
+          ],
+          credentialsData.map((row) => [
+            row.email,
+            row.password,
+            row.role,
+            row.fullName,
+            row.uniqueId,
+            row.status,
+            new Date(row.generatedAt).toLocaleString(),
+            row.generatedBy,
+          ]),
+        );
+      } else if (target === "shifts") {
+        downloadCsvFile(
+          "timing-shift.csv",
+          [
+            "Name",
+            "Role",
+            "Gmail",
+            "Unique ID",
+            "Shift In",
+            "Shift Out",
+            "Time In",
+            "Time Out",
+            "Status",
+          ],
+          shiftsData.map((row) => [
+            row.fullName,
+            row.role,
+            row.email,
+            row.uniqueId,
+            formatWallHm12h(row.shiftStart),
+            formatWallHm12h(row.shiftEnd),
+            row.timeInAt,
+            row.timeOutAt,
+            row.status,
+          ]),
+        );
+      } else {
+        downloadCsvFile(
+          `monthly-attendance-${monthlyMonth}.csv`,
+          [
+            "Month",
+            "Name",
+            "Role",
+            "Gmail",
+            "Unique ID",
+            "Total Weekdays",
+            "Present",
+            "Absent",
+            "Late",
+            "Late->Absent",
+            "Effective Present",
+            "Effective Absent",
+          ],
+          monthlyData.map((row) => [
+            row.month,
+            row.fullName,
+            row.role,
+            row.email,
+            row.uniqueId,
+            String(row.totalWeekdays),
+            String(row.presentDays),
+            String(row.absentDays),
+            String(row.lateDays),
+            String(row.latePenaltyAbsents),
+            String(row.effectivePresent),
+            String(row.effectiveAbsent),
+          ]),
+        );
+      }
+    } finally {
+      setExportingView(null);
+    }
+  }
+
   async function loadOverview() {
+    const dayMode = overviewDayMode;
+    const datePick = overviewDatePick;
+    const roleFilter = overviewRoleFilter;
+    const searchQ = search.trim();
+
     setBusy(true);
     try {
       const statsResult = await apiRequest<{
@@ -393,15 +650,26 @@ function AdminContent({
         timeouts: number;
       }>("/admin/stats");
       const query = new URLSearchParams();
-      if (search.trim()) query.set("search", search.trim());
-      if (filter !== "all") query.set("filter", filter);
-      if (date) query.set("date", date);
+      if (searchQ) query.set("search", searchQ);
+      if (dayMode === "picked" && datePick) {
+        query.set("date", datePick);
+      } else if (dayMode === "yesterday") {
+        query.set("filter", "yesterday");
+      } else {
+        query.set("filter", "today");
+      }
+      if (roleFilter.trim()) {
+        query.set("category", roleFilter.trim());
+      }
       const logsResult = await apiRequest<AttendanceLogRow[]>(
         `/admin/logs?${query.toString()}`,
       );
       setStats(statsResult);
       setLogs(logsResult);
       setLogsListPage(1);
+      setOverviewAppliedLine(
+        formatOverviewPeriodSummary(dayMode, datePick, roleFilter, searchQ),
+      );
     } catch (error) {
       console.error(error);
     } finally {
@@ -414,6 +682,7 @@ function AdminContent({
     try {
       const query = new URLSearchParams();
       if (usersSearch.trim()) query.set("search", usersSearch.trim());
+      if (usersRoleFilter.trim()) query.set("role", usersRoleFilter.trim());
       const rows = await apiRequest<UserDataRow[]>(
         `/admin/users-data?${query.toString()}`,
       );
@@ -432,6 +701,9 @@ function AdminContent({
       const query = new URLSearchParams();
       if (credentialsSearch.trim())
         query.set("search", credentialsSearch.trim());
+      if (credentialsRoleFilter.trim()) {
+        query.set("role", credentialsRoleFilter.trim());
+      }
       const rows = await apiRequest<CredentialRow[]>(
         `/admin/users-credentials?${query.toString()}`,
       );
@@ -741,9 +1013,14 @@ function AdminContent({
   }
 
   async function handleDeleteUser(email: string) {
-    const confirmDelete = window.confirm(
-      `Permanently delete ${email}?\n\nThis removes the user account, all attendance logs, credential records, schedule history, and monthly summary rows for this user. This cannot be undone.`,
-    );
+    const confirmDelete = await requestConfirmation({
+      title: `Delete user ${email}?`,
+      message:
+        "This removes the user account, all attendance logs, credential records, schedule history, and monthly summary rows for this user. This cannot be undone.",
+      confirmLabel: "Delete User",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
     if (!confirmDelete) return;
 
     try {
@@ -758,9 +1035,12 @@ function AdminContent({
       }
       await loadUsersData();
     } catch (error) {
-      window.alert(
-        error instanceof Error ? error.message : "Failed to delete user.",
-      );
+      await requestConfirmation({
+        title: "Delete failed",
+        message: error instanceof Error ? error.message : "Failed to delete user.",
+        confirmLabel: "OK",
+        cancelLabel: "",
+      });
     }
   }
 
@@ -791,9 +1071,13 @@ function AdminContent({
   }
 
   async function handleDeleteCredential(email: string) {
-    const confirmDelete = window.confirm(
-      `Delete credentials for ${email}? This will remove the user login.`,
-    );
+    const confirmDelete = await requestConfirmation({
+      title: `Delete credentials for ${email}?`,
+      message: "This will remove the user login.",
+      confirmLabel: "Delete Credentials",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
     if (!confirmDelete) return;
 
     setPasswordBusy(true);
@@ -826,7 +1110,7 @@ function AdminContent({
     if (view === "overview") {
       void loadOverview();
     }
-  }, [view, filter, date]);
+  }, [view]);
 
   const filteredCount = useMemo(() => logs.length, [logs]);
   const pendingUsers = useMemo(
@@ -1008,23 +1292,34 @@ function AdminContent({
     setSelectedImage(URL.createObjectURL(blob));
   }
 
-  async function exportCsv() {
-    const token = sessionStorage.getItem("et_token") || "";
-    const response = await fetch(`${API_URL}/admin/export-csv`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  async function handleDeleteAttendance(log: AttendanceLogRow) {
+    if (deletingLogId) return;
+    const ok = await requestConfirmation({
+      title: `Delete ${log.type} record?`,
+      message: `Record for ${log.fullName}. This cannot be undone.`,
+      confirmLabel: "Delete Record",
+      cancelLabel: "Cancel",
+      danger: true,
     });
+    if (!ok) return;
 
-    if (!response.ok) {
-      return;
+    setDeletingLogId(log.id);
+    try {
+      await apiRequest<{ success: boolean }>(`/admin/logs/${log.id}`, {
+        method: "DELETE",
+      });
+      await loadOverview();
+    } catch (error) {
+      await requestConfirmation({
+        title: "Delete failed",
+        message:
+          error instanceof Error ? error.message : "Failed to delete attendance.",
+        confirmLabel: "OK",
+        cancelLabel: "",
+      });
+    } finally {
+      setDeletingLogId(null);
     }
-
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "attendance-logs.csv";
-    link.click();
-    URL.revokeObjectURL(url);
   }
 
   async function refreshCurrentAdminView() {
@@ -1063,11 +1358,14 @@ function AdminContent({
       <div className="page-bg admin-bg" />
       <main className="workspace-card glass-card admin-workspace">
         <header className="topbar admin-topbar">
-          <div>
-            <h1>Admin Dashboard</h1>
-            <p>
-              {session.name} · {session.email}
-            </p>
+          <div className="admin-brand">
+            <img src={logoUrl} alt="EduTech Solutions" />
+            <div>
+              <h1>Admin Dashboard</h1>
+              <p>
+                {session.name} · {session.email}
+              </p>
+            </div>
           </div>
           <div className="topbar-actions admin-actions">
             <button
@@ -1084,13 +1382,6 @@ function AdminContent({
               ) : (
                 "Refresh"
               )}
-            </button>
-            <button
-              type="button"
-              className="ghost-btn"
-              onClick={() => void exportCsv()}
-            >
-              Export CSV
             </button>
             <button
               type="button"
@@ -1192,50 +1483,110 @@ function AdminContent({
               />
             </section>
 
-            <section className="filters-bar">
+            <section className="filters-bar overview-filters-bar">
               <input
+                id="overview-log-search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search name, category, status, IP..."
-                className="search-input"
+                placeholder="Name, role, status…"
+                className="search-input overview-search-compact"
               />
-              <div className="filter-row">
+              <div
+                className="overview-period-segmented"
+                role="group"
+                aria-label="Attendance date range"
+              >
                 <button
                   type="button"
-                  className={filter === "today" ? "pill active" : "pill"}
-                  onClick={() => setFilter("today")}
+                  className={`overview-seg-btn ${overviewDayMode === "today" ? "is-active" : ""}`}
+                  aria-pressed={overviewDayMode === "today"}
+                  onClick={() => {
+                    setOverviewDayMode("today");
+                    setOverviewDatePick("");
+                    setShowOverviewDateInput(false);
+                  }}
                 >
                   Today
                 </button>
                 <button
                   type="button"
-                  className={filter === "yesterday" ? "pill active" : "pill"}
-                  onClick={() => setFilter("yesterday")}
+                  className={`overview-seg-btn ${overviewDayMode === "yesterday" ? "is-active" : ""}`}
+                  aria-pressed={overviewDayMode === "yesterday"}
+                  onClick={() => {
+                    setOverviewDayMode("yesterday");
+                    setOverviewDatePick("");
+                    setShowOverviewDateInput(false);
+                  }}
                 >
                   Yesterday
                 </button>
                 <button
                   type="button"
-                  className={filter === "all" ? "pill active" : "pill"}
-                  onClick={() => setFilter("all")}
+                  className={`overview-seg-btn ${overviewDayMode === "picked" ? "is-active" : ""}`}
+                  aria-pressed={overviewDayMode === "picked"}
+                  onClick={() => setShowOverviewDateInput((prev) => !prev)}
                 >
-                  All
+                  Date
                 </button>
+                {showOverviewDateInput ? (
+                  <input
+                    id="overview-date-pick"
+                    value={overviewDayMode === "picked" ? overviewDatePick : ""}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (!next) {
+                        setOverviewDayMode("today");
+                        setOverviewDatePick("");
+                        setShowOverviewDateInput(false);
+                        return;
+                      }
+                      setOverviewDayMode("picked");
+                      setOverviewDatePick(next);
+                    }}
+                    type="date"
+                    className="overview-date-input-visible"
+                    aria-label="Pick attendance date"
+                  />
+                ) : null}
               </div>
-              <input
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-                type="date"
-                className="date-input"
-              />
+              <select
+                value={overviewRoleFilter}
+                onChange={(event) => setOverviewRoleFilter(event.target.value)}
+                className="overview-role-select"
+                aria-label="Filter by role"
+              >
+                {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.value || "all"} value={opt.value}>
+                    {opt.value === "" ? "All roles" : opt.label}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
-                className="primary-btn slim"
+                className="primary-btn slim overview-search-submit"
                 onClick={() => void loadOverview()}
                 disabled={busy}
               >
-                Search
+                {busy ? (
+                  <span className="search-btn-content">
+                    <span className="refresh-btn-spinner" aria-hidden="true" />
+                    Searching…
+                  </span>
+                ) : (
+                  "Search"
+                )}
               </button>
+              <button
+                type="button"
+                className="ghost-btn slim"
+                onClick={() => void handleExportCsv("overview")}
+                disabled={exportingView === "overview"}
+              >
+                {exportingView === "overview" ? "Exporting..." : "Export CSV"}
+              </button>
+              {overviewAppliedLine ? (
+                <p className="overview-applied-line">{overviewAppliedLine}</p>
+              ) : null}
             </section>
 
             <section className="table-card">
@@ -1246,24 +1597,23 @@ function AdminContent({
                 </span>
               </div>
               <div className="table-wrap">
-                <table>
+                <table className="overview-logs-table">
                   <thead>
                     <tr>
                       <th>Time</th>
-                      <th>ID</th>
-                      <th>Full Name</th>
-                      <th>Category</th>
+                      <th>Unique ID</th>
+                      <th>Name</th>
+                      <th>Role</th>
                       <th>Type</th>
-                      <th>Location</th>
                       <th>Status</th>
-                      <th>IP</th>
                       <th>Image</th>
+                      <th>Delete Record</th>
                     </tr>
                   </thead>
                   <tbody>
                     {logs.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="empty-row">
+                        <td colSpan={8} className="empty-row">
                           No records found.
                         </td>
                       </tr>
@@ -1274,7 +1624,6 @@ function AdminContent({
                           <td>{log.uniqueId}</td>
                           <td>
                             <strong>{log.fullName}</strong>
-                            <small>{log.email}</small>
                           </td>
                           <td>{log.category}</td>
                           <td>
@@ -1288,7 +1637,6 @@ function AdminContent({
                               {log.type}
                             </span>
                           </td>
-                          <td>{log.location}</td>
                           <td>
                             <span
                               className={
@@ -1299,9 +1647,6 @@ function AdminContent({
                             >
                               {log.status}
                             </span>
-                          </td>
-                          <td>
-                            <code>{log.ip}</code>
                           </td>
                           <td>
                             {log.hasImage ? (
@@ -1315,6 +1660,16 @@ function AdminContent({
                             ) : (
                               "—"
                             )}
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="text-btn danger"
+                              disabled={deletingLogId === log.id}
+                              onClick={() => void handleDeleteAttendance(log)}
+                            >
+                              {deletingLogId === log.id ? "Deleting..." : "Delete"}
+                            </button>
                           </td>
                         </tr>
                       ))
@@ -1584,13 +1939,25 @@ function AdminContent({
                   {addUserMessage}
                 </div>
               ) : null}
-              <section className="filters-bar compact-filters">
+              <section className="filters-bar compact-filters monthly-inline-filters">
                 <input
                   value={usersSearch}
                   onChange={(event) => setUsersSearch(event.target.value)}
                   placeholder="Search users by name, role, id, email"
                   className="search-input"
                 />
+                <select
+                  value={usersRoleFilter}
+                  onChange={(event) => setUsersRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter users by role"
+                >
+                  {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option key={`users-${opt.value || "all"}`} value={opt.value}>
+                      {opt.value === "" ? "All roles" : opt.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   className="primary-btn slim"
@@ -1598,6 +1965,14 @@ function AdminContent({
                   disabled={usersBusy}
                 >
                   Search
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={() => void handleExportCsv("users")}
+                  disabled={exportingView === "users"}
+                >
+                  {exportingView === "users" ? "Exporting..." : "Export CSV"}
                 </button>
               </section>
               <div className="table-wrap">
@@ -2214,6 +2589,21 @@ function AdminContent({
                   placeholder="Search credentials by name, role, id, email"
                   className="search-input"
                 />
+                <select
+                  value={credentialsRoleFilter}
+                  onChange={(event) => setCredentialsRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter credentials by role"
+                >
+                  {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option
+                      key={`credentials-${opt.value || "all"}`}
+                      value={opt.value}
+                    >
+                      {opt.value === "" ? "All roles" : opt.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   className="primary-btn slim"
@@ -2221,6 +2611,14 @@ function AdminContent({
                   disabled={credentialsBusy}
                 >
                   Search
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={() => void handleExportCsv("credentials")}
+                  disabled={exportingView === "credentials"}
+                >
+                  {exportingView === "credentials" ? "Exporting..." : "Export CSV"}
                 </button>
               </section>
               <div className="table-wrap">
@@ -2328,13 +2726,25 @@ function AdminContent({
               <span>Schedule + marked attendance</span>
             </div>
             <div className="user-generator-body">
-              <section className="filters-bar compact-filters">
+              <section className="filters-bar compact-filters monthly-inline-filters">
                 <input
                   value={shiftsSearch}
                   onChange={(event) => setShiftsSearch(event.target.value)}
                   placeholder="Search users by name, role, id, email"
                   className="search-input"
                 />
+                <select
+                  value={shiftsRoleFilter}
+                  onChange={(event) => setShiftsRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter shifts by role"
+                >
+                  {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option key={`shifts-${opt.value || "all"}`} value={opt.value}>
+                      {opt.value === "" ? "All roles" : opt.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   className="primary-btn slim"
@@ -2342,6 +2752,14 @@ function AdminContent({
                   disabled={shiftsBusy}
                 >
                   Search
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={() => void handleExportCsv("shifts")}
+                  disabled={exportingView === "shifts"}
+                >
+                  {exportingView === "shifts" ? "Exporting..." : "Export CSV"}
                 </button>
               </section>
               <div className="table-wrap">
@@ -2449,6 +2867,18 @@ function AdminContent({
                   className="search-input"
                 />
                 <select
+                  value={monthlyRoleFilter}
+                  onChange={(event) => setMonthlyRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter monthly attendance by role"
+                >
+                  {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option key={`monthly-${opt.value || "all"}`} value={opt.value}>
+                      {opt.value === "" ? "All roles" : opt.label}
+                    </option>
+                  ))}
+                </select>
+                <select
                   value={monthlyMonth}
                   onChange={(event) => setMonthlyMonth(event.target.value)}
                   className="date-input"
@@ -2474,9 +2904,10 @@ function AdminContent({
                 <button
                   type="button"
                   className="ghost-btn"
-                  onClick={() => void exportMonthlyCsv()}
+                  onClick={() => void handleExportCsv("attendance")}
+                  disabled={exportingView === "attendance"}
                 >
-                  Export CSV
+                  {exportingView === "attendance" ? "Exporting..." : "Export CSV"}
                 </button>
               </section>
 
@@ -2584,6 +3015,47 @@ function AdminContent({
               ×
             </button>
             <img src={selectedImage} alt="Attendance capture" />
+          </div>
+        </div>
+      ) : null}
+
+      {confirmModal ? (
+        <div
+          className="admin-modal-backdrop"
+          role="presentation"
+          onClick={() => closeConfirmModal(false)}
+        >
+          <div
+            className="admin-modal-card confirm-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="admin-modal-head">
+              <h3 id="confirm-modal-title">{confirmModal.title}</h3>
+            </div>
+            <div className="admin-modal-body confirm-modal-body">
+              <p>{confirmModal.message}</p>
+            </div>
+            <div className="admin-modal-actions">
+              {confirmModal.cancelLabel ? (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => closeConfirmModal(false)}
+                >
+                  {confirmModal.cancelLabel}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={confirmModal.danger ? "ghost-btn danger" : "primary-btn slim"}
+                onClick={() => closeConfirmModal(true)}
+              >
+                {confirmModal.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

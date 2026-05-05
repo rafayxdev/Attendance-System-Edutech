@@ -166,6 +166,12 @@ function monthlyTableName(monthLabel: string): string {
   return `monthly_attendance_${safe}`;
 }
 
+function parseMonthFromDayKey(dayKey: string): { label: string } | null {
+  const match = String(dayKey).trim().match(/^(\d{4})-(\d{2})-\d{2}$/);
+  if (!match) return null;
+  return { label: `${match[1]}-${match[2]}` };
+}
+
 async function monthlyTableExists(monthLabel: string): Promise<boolean> {
   const table = monthlyTableName(monthLabel);
   const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
@@ -177,6 +183,104 @@ async function monthlyTableExists(monthLabel: string): Promise<boolean> {
     table,
   );
   return Boolean(rows[0]?.exists);
+}
+
+async function rebuildMonthlySummaryForUser(params: {
+  monthLabel: string;
+  user: {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    uniqueId: string | null;
+  };
+}): Promise<void> {
+  const { monthLabel, user } = params;
+  const month = parseMonthParam(monthLabel);
+  if (!month) return;
+  const exists = await monthlyTableExists(monthLabel);
+  if (!exists) return;
+
+  const scheduleLogs = await prisma.auditLog.findMany({
+    where: { action: scheduleAuditAction },
+    orderBy: { createdAt: "desc" },
+    select: { payload: true },
+    take: 5000,
+  });
+  const userEmailKey = user.email.trim().toLowerCase();
+  const schedule =
+    scheduleLogs
+      .map((log) => parseSchedulePayload(log.payload))
+      .find((payload) => payload?.email === userEmailKey)?.schedule ?? [];
+
+  const scheduleDays = new Set(
+    (schedule.length > 0
+      ? schedule
+      : [
+          { day: "mon", startTime: "09:00", endTime: "17:00" },
+          { day: "tue", startTime: "09:00", endTime: "17:00" },
+          { day: "wed", startTime: "09:00", endTime: "17:00" },
+          { day: "thu", startTime: "09:00", endTime: "17:00" },
+          { day: "fri", startTime: "09:00", endTime: "17:00" },
+        ]
+    ).map((s) => s.day),
+  );
+  const totalWeekdays = listMonthDayKeys({
+    year: month.year,
+    month: month.month,
+    timeZone: "Asia/Karachi",
+  }).filter((day) => scheduleDays.has(day.weekday)).length;
+
+  const monthStart = `${monthLabel}-01`;
+  const monthEndExclusive = formatDayKey(
+    new Date(Date.UTC(month.year, month.month, 1, 0, 0, 0)),
+  );
+  const timeIns = await prisma.attendanceLog.findMany({
+    where: {
+      userId: user.id,
+      attendanceType: "Time In",
+      attendanceDay: {
+        gte: monthStart,
+        lt: monthEndExclusive,
+      },
+    },
+    select: { status: true },
+  });
+  const presentDays = timeIns.length;
+  const lateDays = timeIns.filter((entry) => entry.status === "Late").length;
+  const table = monthlyTableName(monthLabel);
+
+  if (presentDays <= 0) {
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "${table}" WHERE user_id = $1`,
+      user.id,
+    );
+    return;
+  }
+
+  await prisma.$executeRawUnsafe(
+    `
+    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, late_days, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+    ON CONFLICT (user_id) DO UPDATE SET
+      email = EXCLUDED.email,
+      full_name = EXCLUDED.full_name,
+      role = EXCLUDED.role,
+      unique_id = EXCLUDED.unique_id,
+      total_weekdays = EXCLUDED.total_weekdays,
+      present_days = EXCLUDED.present_days,
+      late_days = EXCLUDED.late_days,
+      updated_at = NOW();
+    `,
+    user.id,
+    user.email,
+    user.fullName,
+    user.role,
+    user.uniqueId,
+    totalWeekdays,
+    presentDays,
+    lateDays,
+  );
 }
 
 function parseCredentialPayload(payload: unknown): CredentialPayload | null {
@@ -611,10 +715,13 @@ adminRouter.get(
   "/users-data",
   async (request: AuthenticatedRequest, response) => {
     const search = (request.query.search as string | undefined)?.trim() ?? "";
+    const role = (request.query.role as string | undefined)?.trim() ?? "";
 
     const users = await prisma.user.findMany({
-      where: search
-        ? {
+      where: {
+        ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
+        ...(search
+          ? {
             OR: [
               { email: { contains: search, mode: "insensitive" } },
               { role: { contains: search, mode: "insensitive" } },
@@ -622,7 +729,8 @@ adminRouter.get(
               { uniqueId: { contains: search, mode: "insensitive" } },
             ],
           }
-        : undefined,
+          : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 1000,
     });
@@ -872,6 +980,8 @@ adminRouter.get(
   async (request: AuthenticatedRequest, response) => {
     const search =
       (request.query.search as string | undefined)?.trim().toLowerCase() ?? "";
+    const role =
+      (request.query.role as string | undefined)?.trim().toLowerCase() ?? "";
 
     const logs = await prisma.auditLog.findMany({
       where: { action: credentialAuditAction },
@@ -897,6 +1007,7 @@ adminRouter.get(
       })
       .filter((row): row is NonNullable<typeof row> => Boolean(row))
       .filter((row) => {
+        if (role && row.role.toLowerCase() !== role) return false;
         if (!search) return true;
         return (
           row.email.toLowerCase().includes(search) ||
@@ -914,14 +1025,17 @@ adminRouter.get(
   "/shifts-today",
   async (request: AuthenticatedRequest, response) => {
     const search = (request.query.search as string | undefined)?.trim() ?? "";
+    const role = (request.query.role as string | undefined)?.trim() ?? "";
     const now = new Date();
     const todayKey = formatDayKey(now);
     const tz = "Asia/Karachi";
     const todayWeekday = weekdayKey(now, tz);
 
     const users = await prisma.user.findMany({
-      where: search
-        ? {
+      where: {
+        ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
+        ...(search
+          ? {
             OR: [
               { email: { contains: search, mode: "insensitive" } },
               { role: { contains: search, mode: "insensitive" } },
@@ -929,7 +1043,8 @@ adminRouter.get(
               { uniqueId: { contains: search, mode: "insensitive" } },
             ],
           }
-        : undefined,
+          : {}),
+      },
       orderBy: { createdAt: "desc" },
       take: 1000,
     });
@@ -1020,6 +1135,7 @@ adminRouter.get(
     }
 
     const search = (request.query.search as string | undefined)?.trim() ?? "";
+    const role = (request.query.role as string | undefined)?.trim() ?? "";
     const exists = await monthlyTableExists(monthParam.label);
     if (!exists) {
       response.json([]);
@@ -1059,11 +1175,13 @@ adminRouter.get(
         GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
       WHERE ($2 = '' OR email ILIKE '%' || $2 || '%' OR full_name ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR COALESCE(unique_id,'') ILIKE '%' || $2 || '%')
+        AND ($3 = '' OR LOWER(role) = LOWER($3))
       ORDER BY full_name ASC
       LIMIT 5000;
       `,
       monthParam.label,
       search,
+      role,
     );
     response.json(rows);
   },
@@ -1099,6 +1217,7 @@ adminRouter.get(
       return;
     }
 
+    const role = (request.query.role as string | undefined)?.trim() ?? "";
     const exists = await monthlyTableExists(monthParam.label);
     if (!exists) {
       response.status(404).json({ message: "No monthly table for this month." });
@@ -1136,10 +1255,12 @@ adminRouter.get(
         GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
         GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
+      WHERE ($2 = '' OR LOWER(role) = LOWER($2))
       ORDER BY full_name ASC
       LIMIT 5000;
       `,
       monthParam.label,
+      role,
     );
 
     const header = [
@@ -1366,19 +1487,26 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
 adminRouter.get("/logs", async (request: AuthenticatedRequest, response) => {
   const search = (request.query.search as string | undefined)?.trim() ?? "";
   const date = (request.query.date as string | undefined)?.trim() ?? "";
-  const filter = (request.query.filter as string | undefined)?.trim() ?? "all";
+  const filterParam = (request.query.filter as string | undefined)?.trim() ?? "";
+  const category =
+    (request.query.category as string | undefined)?.trim() ?? "";
 
   const dayKey =
     date ||
-    (filter === "today"
-      ? formatDayKey(new Date())
-      : filter === "yesterday"
+    (filterParam === "all"
+      ? undefined
+      : filterParam === "yesterday"
         ? formatDayKey(new Date(Date.now() - 86400000))
-        : undefined);
+        : formatDayKey(new Date()));
 
   const logs = await prisma.attendanceLog.findMany({
     where: {
       ...(dayKey ? { attendanceDay: dayKey } : {}),
+      ...(category
+        ? {
+            category: { equals: category, mode: "insensitive" },
+          }
+        : {}),
       ...(search
         ? {
             OR: [
@@ -1433,6 +1561,49 @@ adminRouter.get(
 
     response.setHeader("Content-Type", record.imageMimeType);
     response.send(Buffer.from(record.imageData));
+  },
+);
+
+adminRouter.delete(
+  "/logs/:id",
+  async (request: AuthenticatedRequest, response) => {
+    const id = String(request.params.id || "").trim();
+    if (!id) {
+      response.status(400).json({ message: "Invalid attendance id." });
+      return;
+    }
+
+    const record = await prisma.attendanceLog.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!record) {
+      response.status(404).json({ message: "Attendance record not found." });
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.emailLog.deleteMany({ where: { attendanceId: id } });
+      await tx.attendanceLog.delete({ where: { id } });
+    });
+
+    if (record.user) {
+      const month = parseMonthFromDayKey(record.attendanceDay);
+      if (month) {
+        await rebuildMonthlySummaryForUser({
+          monthLabel: month.label,
+          user: {
+            id: record.user.id,
+            email: record.user.email,
+            fullName: record.user.fullName,
+            role: record.user.role,
+            uniqueId: record.user.uniqueId ?? null,
+          },
+        });
+      }
+    }
+
+    response.json({ success: true });
   },
 );
 
