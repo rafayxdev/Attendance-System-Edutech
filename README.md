@@ -14,7 +14,6 @@ This repository contains the React + Node migration of the EduTech attendance sy
 
 - `apps/web` - React client
 - `apps/api` - backend API and Prisma schema
-- `Previous Project Files` - the original Google Apps Script export for reference
 
 ## What you need to do
 
@@ -26,14 +25,12 @@ This repository contains the React + Node migration of the EduTech attendance sy
    - `ACCESS_PROFILE=home` for your local testing setup
    - `ACCESS_PROFILE=university` for the campus deployment
 6. If you want real email receipts, set `GMAIL_USER`, `GMAIL_APP_PASSWORD`, and optionally `EMAIL_FROM`.
-7. Run the Prisma migration and seed script.
-8. Install dependencies with npm.
+7. Install dependencies with npm.
 
 ## Local setup
 
 ```bash
 npm install
-npm run seed -w @edutech/api
 npm run dev:api
 npm run dev:web
 ```
@@ -88,9 +85,5 @@ Web host:
 
 - `VITE_API_URL=https://your-api-domain`
 
-## Seed notes
-
-The seed script configures the access policy for the selected `ACCESS_PROFILE`.
-Create admins/users from the admin panel after login.
 
 Guest attendance does not require an account.
