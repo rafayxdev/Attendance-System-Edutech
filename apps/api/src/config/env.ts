@@ -48,9 +48,6 @@ export const env = {
   campusLat: toNumber(process.env.CAMPUS_LAT, 25.3833456),
   campusLng: toNumber(process.env.CAMPUS_LNG, 68.3844759),
   campusRadiusMeters: toNumber(process.env.CAMPUS_RADIUS_METERS, 250),
-  allowDemoSeed: toBool(process.env.ALLOW_DEMO_SEED, true),
-  demoAdminEmail: process.env.DEMO_ADMIN_EMAIL ?? "admin@edutech.com",
-  demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD ?? "Admin@12345",
   gmailUser: (process.env.GMAIL_USER ?? "").trim(),
   gmailAppPassword: (process.env.GMAIL_APP_PASSWORD ?? "").trim(),
   emailFrom:

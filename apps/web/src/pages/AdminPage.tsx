@@ -292,6 +292,7 @@ function AdminContent({
   onLogout: () => void;
 }) {
   const [view, setView] = useState<AdminView>("overview");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [stats, setStats] = useState({
     present: 0,
@@ -1449,6 +1450,17 @@ function AdminContent({
           <div className="topbar-actions admin-actions">
             <button
               type="button"
+              className="ghost-btn mobile-nav-toggle"
+              aria-label={mobileNavOpen ? "Close menu" : "Open menu"}
+              aria-expanded={mobileNavOpen}
+              aria-controls="admin-mobile-nav"
+              onClick={() => setMobileNavOpen((prev) => !prev)}
+            >
+              <span className="hamburger" aria-hidden="true" />
+              Menu
+            </button>
+            <button
+              type="button"
               className="ghost-btn"
               disabled={refreshBusy}
               onClick={() => void refreshCurrentAdminView()}
@@ -1472,11 +1484,17 @@ function AdminContent({
           </div>
         </header>
 
-        <section className="admin-nav-tabs role-tabs">
+        <section
+          id="admin-mobile-nav"
+          className={`admin-nav-tabs role-tabs ${mobileNavOpen ? "is-open" : ""}`}
+        >
           <button
             type="button"
             className={view === "overview" ? "role-tab active" : "role-tab"}
-            onClick={() => setView("overview")}
+            onClick={() => {
+              setView("overview");
+              setMobileNavOpen(false);
+            }}
           >
             Overview
           </button>
@@ -1485,6 +1503,7 @@ function AdminContent({
             className={view === "users" ? "role-tab active" : "role-tab"}
             onClick={() => {
               setView("users");
+              setMobileNavOpen(false);
               void loadUsersData();
             }}
           >
@@ -1495,6 +1514,7 @@ function AdminContent({
             className={view === "generator" ? "role-tab active" : "role-tab"}
             onClick={() => {
               setView("generator");
+              setMobileNavOpen(false);
               void loadUsersData();
             }}
           >
@@ -1505,6 +1525,7 @@ function AdminContent({
             className={view === "credentials" ? "role-tab active" : "role-tab"}
             onClick={() => {
               setView("credentials");
+              setMobileNavOpen(false);
               void loadCredentials();
             }}
           >
@@ -1515,6 +1536,7 @@ function AdminContent({
             className={view === "shifts" ? "role-tab active" : "role-tab"}
             onClick={() => {
               setView("shifts");
+              setMobileNavOpen(false);
               void loadShifts();
             }}
           >
@@ -1525,6 +1547,7 @@ function AdminContent({
             className={view === "attendance" ? "role-tab active" : "role-tab"}
             onClick={() => {
               setView("attendance");
+              setMobileNavOpen(false);
               void loadMonthlyMonths();
               void loadMonthlyAttendance();
             }}

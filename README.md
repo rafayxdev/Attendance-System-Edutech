@@ -83,19 +83,14 @@ API host:
 - `GMAIL_USER`
 - `GMAIL_APP_PASSWORD`
 - `EMAIL_FROM` optional
-- `DEMO_ADMIN_EMAIL`
-- `DEMO_ADMIN_PASSWORD`
 
 Web host:
 
 - `VITE_API_URL=https://your-api-domain`
 
-## Seed accounts
+## Seed notes
 
-The seed script creates demo credentials from environment variables:
-
-- Admin: `DEMO_ADMIN_EMAIL` / `DEMO_ADMIN_PASSWORD`
-
-The app does not seed a demo staff account anymore. Create staff/users from the admin panel after login.
+The seed script configures the access policy for the selected `ACCESS_PROFILE`.
+Create admins/users from the admin panel after login.
 
 Guest attendance does not require an account.

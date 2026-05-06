@@ -1,34 +1,7 @@
-import bcrypt from "bcryptjs";
 import { prisma } from "../src/lib/prisma.js";
 import { env } from "../src/config/env.js";
 
 async function main() {
-  if (!env.allowDemoSeed) {
-    console.log("Demo seed disabled.");
-    return;
-  }
-
-  const adminPassword = await bcrypt.hash(env.demoAdminPassword, 10);
-
-  await prisma.user.upsert({
-    where: { email: env.demoAdminEmail.toLowerCase() },
-    update: {
-      passwordHash: adminPassword,
-      role: "admin",
-      fullName: "EduTech Admin",
-      uniqueId: "ADMIN-001",
-      isActive: true,
-    },
-    create: {
-      email: env.demoAdminEmail.toLowerCase(),
-      passwordHash: adminPassword,
-      role: "admin",
-      fullName: "EduTech Admin",
-      uniqueId: "ADMIN-001",
-      isActive: true,
-    },
-  });
-
   await prisma.accessPolicy.upsert({
     where: { environmentName: env.accessProfile },
     update: {
@@ -48,7 +21,7 @@ async function main() {
     },
   });
 
-  console.log("Demo seed completed.");
+  console.log("Seed completed.");
 }
 
 main()
