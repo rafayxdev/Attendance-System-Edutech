@@ -68,10 +68,10 @@ function AttendanceContent({
   const [windowMessage, setWindowMessage] = useState("");
   const [autoMessage, setAutoMessage] = useState("");
   const [liveNow, setLiveNow] = useState(() => new Date());
+  const [loadingWindow, setLoadingWindow] = useState(false);
 
   const clockTimeZone =
-    access.policy?.timezone ??
-    Intl.DateTimeFormat().resolvedOptions().timeZone;
+    access.policy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -81,14 +81,13 @@ function AttendanceContent({
   }, []);
 
   async function loadWindow(selectedType: "Time In" | "Time Out") {
+    setLoadingWindow(true);
     try {
       const result = await apiRequest<{
         recommendedType?: "Time In" | "Time Out";
         allowed: boolean;
         message: string | null;
-      }>(
-        `/attendance/user-window?type=${encodeURIComponent(selectedType)}`,
-      );
+      }>(`/attendance/user-window?type=${encodeURIComponent(selectedType)}`);
       setCameraAllowed(result.allowed);
       setWindowMessage(result.message ?? "");
       if (!result.allowed) {
@@ -97,10 +96,13 @@ function AttendanceContent({
     } catch {
       setCameraAllowed(true);
       setWindowMessage("");
+    } finally {
+      setLoadingWindow(false);
     }
   }
 
   async function loadAutoType() {
+    setLoadingWindow(true);
     try {
       const result = await apiRequest<{
         recommendedType: "Time In" | "Time Out";
@@ -115,6 +117,8 @@ function AttendanceContent({
       if (!result.allowed) setImage("");
     } catch {
       setAutoMessage("");
+    } finally {
+      setLoadingWindow(false);
     }
   }
 
@@ -123,10 +127,13 @@ function AttendanceContent({
   }, []);
   async function submitAttendance(event: React.FormEvent) {
     event.preventDefault();
+    setLoadingWindow(false);
 
     if (!cameraAllowed) {
       setNoticeType("error");
-      setNotice(windowMessage || "Attendance capture is not allowed right now.");
+      setNotice(
+        windowMessage || "Attendance capture is not allowed right now.",
+      );
       return;
     }
 
@@ -206,8 +213,8 @@ function AttendanceContent({
             <div className="attendance-brand">
               <img src={logoUrl} alt="EduTech Solutions" />
               <div>
-            <h1>Digital Attendance System</h1>
-            <p>Welcome back, {session.name}</p>
+                <h1>Digital Attendance System</h1>
+                <p>Welcome back, {session.name}</p>
               </div>
             </div>
           </div>
@@ -256,7 +263,7 @@ function AttendanceContent({
             <div className="type-label">Attendance Type</div>
             <div className="type-row">
               <div className="pill active" role="status" aria-live="polite">
-                {type}
+                {loadingWindow ? "Checking attendance..." : type}
               </div>
               {submitStatus ? (
                 <div
@@ -288,13 +295,20 @@ function AttendanceContent({
             </div>
           ) : null}
 
-          {cameraAllowed ? (
-            <ImageCapture value={image} onChange={setImage} cameraOnly required />
+          {cameraAllowed && !loadingWindow ? (
+            <ImageCapture
+              value={image}
+              onChange={setImage}
+              cameraOnly
+              required
+            />
           ) : (
             <div className="notice info">
-              {autoMessage ||
-                windowMessage ||
-                "You cannot capture image right now due to attendance time window."}
+              {loadingWindow
+                ? "Checking attendance..."
+                : autoMessage ||
+                  windowMessage ||
+                  "You cannot capture image right now due to attendance time window."}
             </div>
           )}
 
@@ -302,8 +316,16 @@ function AttendanceContent({
             <div className={`notice ${noticeType}`}>{notice}</div>
           ) : null}
 
-          <button type="submit" className="primary-btn" disabled={busy}>
-            {busy ? "Submitting..." : "Submit Attendance"}
+          <button
+            type="submit"
+            className="primary-btn"
+            disabled={busy || loadingWindow}
+          >
+            {loadingWindow
+              ? "Checking..."
+              : busy
+                ? "Submitting..."
+                : "Submit Attendance"}
           </button>
         </form>
 

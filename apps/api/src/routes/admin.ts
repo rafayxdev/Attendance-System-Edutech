@@ -44,7 +44,7 @@ const createUserDataSchema = z.object({
         endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
       }),
     )
-    .min(1),
+    .min(0),
   isActive: z.boolean().optional(),
 });
 
@@ -61,7 +61,7 @@ const updateUserDataSchema = z.object({
         endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/),
       }),
     )
-    .min(1)
+    .min(0)
     .optional(),
   isActive: z.boolean().optional(),
 });
@@ -85,6 +85,10 @@ const credentialAuditAction = "USER_CREDENTIAL_GENERATED";
 const scheduleAuditAction = "USER_ATTENDANCE_SCHEDULE";
 const passwordChangeAuditAction = "USER_CREDENTIAL_PASSWORD_CHANGED";
 
+function isAdminRoleValue(role: string): boolean {
+  return normalizeKey(role) === "admin";
+}
+
 type CredentialPayload = {
   email: string;
   fullName: string;
@@ -96,7 +100,11 @@ type CredentialPayload = {
 
 type SchedulePayload = {
   email: string;
-  schedule: Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>;
+  schedule: Array<{
+    day: "mon" | "tue" | "wed" | "thu" | "fri";
+    startTime: string;
+    endTime: string;
+  }>;
 };
 
 function weekdayKey(
@@ -148,8 +156,10 @@ function listMonthDayKeys(params: {
   timeZone: string;
 }): Array<{ dayKey: string; weekday: ReturnType<typeof weekdayKey> }> {
   const { start, endExclusive } = monthDateRangeUTC(params);
-  const days: Array<{ dayKey: string; weekday: ReturnType<typeof weekdayKey> }> =
-    [];
+  const days: Array<{
+    dayKey: string;
+    weekday: ReturnType<typeof weekdayKey>;
+  }> = [];
   for (
     let d = new Date(start);
     d < endExclusive;
@@ -167,7 +177,9 @@ function monthlyTableName(monthLabel: string): string {
 }
 
 function parseMonthFromDayKey(dayKey: string): { label: string } | null {
-  const match = String(dayKey).trim().match(/^(\d{4})-(\d{2})-\d{2}$/);
+  const match = String(dayKey)
+    .trim()
+    .match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!match) return null;
   return { label: `${match[1]}-${match[2]}` };
 }
@@ -310,7 +322,8 @@ function parseCredentialPayload(payload: unknown): CredentialPayload | null {
 function parseSchedulePayload(payload: unknown): SchedulePayload | null {
   if (!payload || typeof payload !== "object") return null;
   const row = payload as Record<string, unknown>;
-  if (typeof row.email !== "string" || !Array.isArray(row.schedule)) return null;
+  if (typeof row.email !== "string" || !Array.isArray(row.schedule))
+    return null;
 
   const validDays = new Set(["mon", "tue", "wed", "thu", "fri"]);
   const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -414,7 +427,11 @@ async function purgeUserAndAllRecords(
     .filter((name) => /^monthly_attendance_[0-9]{4}_[0-9]{2}$/.test(name));
 
   const auditIds = [
-    ...new Set([...credentialLogIds, ...passwordChangeLogIds, ...scheduleLogIds]),
+    ...new Set([
+      ...credentialLogIds,
+      ...passwordChangeLogIds,
+      ...scheduleLogIds,
+    ]),
   ];
 
   await prisma.$transaction(async (tx) => {
@@ -521,8 +538,7 @@ async function propagateUserProfileChanges(params: {
   for (const log of passwordLogs) {
     if (!log.payload || typeof log.payload !== "object") continue;
     const p = log.payload as Record<string, unknown>;
-    const em =
-      typeof p.email === "string" ? p.email.trim().toLowerCase() : "";
+    const em = typeof p.email === "string" ? p.email.trim().toLowerCase() : "";
     if (em !== prevKey) continue;
     await prisma.auditLog.update({
       where: { id: log.id },
@@ -722,13 +738,13 @@ adminRouter.get(
         ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
         ...(search
           ? {
-            OR: [
-              { email: { contains: search, mode: "insensitive" } },
-              { role: { contains: search, mode: "insensitive" } },
-              { fullName: { contains: search, mode: "insensitive" } },
-              { uniqueId: { contains: search, mode: "insensitive" } },
-            ],
-          }
+              OR: [
+                { email: { contains: search, mode: "insensitive" } },
+                { role: { contains: search, mode: "insensitive" } },
+                { fullName: { contains: search, mode: "insensitive" } },
+                { uniqueId: { contains: search, mode: "insensitive" } },
+              ],
+            }
           : {}),
       },
       orderBy: { createdAt: "desc" },
@@ -753,7 +769,11 @@ adminRouter.get(
     }
     const scheduleByEmail = new Map<
       string,
-      Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>
+      Array<{
+        day: "mon" | "tue" | "wed" | "thu" | "fri";
+        startTime: string;
+        endTime: string;
+      }>
     >();
     for (const log of scheduleLogs) {
       const payload = parseSchedulePayload(log.payload);
@@ -791,9 +811,17 @@ adminRouter.post(
     const role = normalizeKey(parsed.data.role);
     const fullName = parsed.data.fullName.trim();
     const uniqueId = parsed.data.uniqueId?.trim() || null;
-    if (hasInvalidScheduleRange(parsed.data.attendanceSchedule)) {
+    const attendanceSchedule = parsed.data.attendanceSchedule;
+    if (!isAdminRoleValue(role) && attendanceSchedule.length === 0) {
       response.status(400).json({
-        message: "Each attendance schedule must have end time after start time.",
+        message: "Add at least one weekday schedule.",
+      });
+      return;
+    }
+    if (hasInvalidScheduleRange(attendanceSchedule)) {
+      response.status(400).json({
+        message:
+          "Each attendance schedule must have end time after start time.",
       });
       return;
     }
@@ -829,7 +857,7 @@ adminRouter.post(
         action: scheduleAuditAction,
         payload: {
           email,
-          schedule: parsed.data.attendanceSchedule,
+          schedule: attendanceSchedule,
         },
       },
     });
@@ -876,13 +904,19 @@ adminRouter.put(
         ? parsed.data.uniqueId?.trim() || null
         : existing.uniqueId;
     const nextIsActive = parsed.data.isActive ?? existing.isActive;
+    const attendanceSchedule = parsed.data.attendanceSchedule;
 
-    if (
-      parsed.data.attendanceSchedule &&
-      hasInvalidScheduleRange(parsed.data.attendanceSchedule)
-    ) {
+    if (attendanceSchedule && hasInvalidScheduleRange(attendanceSchedule)) {
       response.status(400).json({
-        message: "Each attendance schedule must have end time after start time.",
+        message:
+          "Each attendance schedule must have end time after start time.",
+      });
+      return;
+    }
+
+    if (!isAdminRoleValue(nextRole) && attendanceSchedule?.length === 0) {
+      response.status(400).json({
+        message: "Add at least one weekday schedule.",
       });
       return;
     }
@@ -923,8 +957,7 @@ adminRouter.put(
     const latestSchedule = scheduleLogs
       .map((log) => parseSchedulePayload(log.payload))
       .find((payload) => payload?.email === currentEmail);
-    const scheduleToSave =
-      parsed.data.attendanceSchedule ?? latestSchedule?.schedule ?? [];
+    const scheduleToSave = attendanceSchedule ?? latestSchedule?.schedule ?? [];
 
     await propagateUserProfileChanges({
       userId: updated.id,
@@ -1036,13 +1069,13 @@ adminRouter.get(
         ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
         ...(search
           ? {
-            OR: [
-              { email: { contains: search, mode: "insensitive" } },
-              { role: { contains: search, mode: "insensitive" } },
-              { fullName: { contains: search, mode: "insensitive" } },
-              { uniqueId: { contains: search, mode: "insensitive" } },
-            ],
-          }
+              OR: [
+                { email: { contains: search, mode: "insensitive" } },
+                { role: { contains: search, mode: "insensitive" } },
+                { fullName: { contains: search, mode: "insensitive" } },
+                { uniqueId: { contains: search, mode: "insensitive" } },
+              ],
+            }
           : {}),
       },
       orderBy: { createdAt: "desc" },
@@ -1056,7 +1089,11 @@ adminRouter.get(
     });
     const scheduleByEmail = new Map<
       string,
-      Array<{ day: "mon" | "tue" | "wed" | "thu" | "fri"; startTime: string; endTime: string }>
+      Array<{
+        day: "mon" | "tue" | "wed" | "thu" | "fri";
+        startTime: string;
+        endTime: string;
+      }>
     >();
     for (const log of scheduleLogs) {
       const payload = parseSchedulePayload(log.payload);
@@ -1099,7 +1136,7 @@ adminRouter.get(
       const todaySlot =
         todayWeekday === "sat" || todayWeekday === "sun"
           ? null
-          : schedule.find((s) => s.day === todayWeekday) ?? null;
+          : (schedule.find((s) => s.day === todayWeekday) ?? null);
       const timeIn = timeInByUserId.get(user.id) ?? null;
       const timeOut = timeOutByUserId.get(user.id) ?? null;
       const timeInStatus = statusByUserId.get(user.id) ?? null;
@@ -1128,7 +1165,9 @@ adminRouter.get(
 adminRouter.get(
   "/monthly-attendance",
   async (request: AuthenticatedRequest, response) => {
-    const monthParam = parseMonthParam(request.query.month as string | undefined);
+    const monthParam = parseMonthParam(
+      request.query.month as string | undefined,
+    );
     if (!monthParam) {
       response.status(400).json({ message: "Invalid month. Use YYYY-MM." });
       return;
@@ -1211,7 +1250,9 @@ adminRouter.get(
 adminRouter.get(
   "/monthly-attendance/export-csv",
   async (request: AuthenticatedRequest, response) => {
-    const monthParam = parseMonthParam(request.query.month as string | undefined);
+    const monthParam = parseMonthParam(
+      request.query.month as string | undefined,
+    );
     if (!monthParam) {
       response.status(400).json({ message: "Invalid month. Use YYYY-MM." });
       return;
@@ -1220,7 +1261,9 @@ adminRouter.get(
     const role = (request.query.role as string | undefined)?.trim() ?? "";
     const exists = await monthlyTableExists(monthParam.label);
     if (!exists) {
-      response.status(404).json({ message: "No monthly table for this month." });
+      response
+        .status(404)
+        .json({ message: "No monthly table for this month." });
       return;
     }
     const table = monthlyTableName(monthParam.label);
@@ -1432,7 +1475,9 @@ adminRouter.delete(
         data: { passwordHash: disabledPasswordHash },
       });
       if (credentialLogIds.length > 0) {
-        await tx.auditLog.deleteMany({ where: { id: { in: credentialLogIds } } });
+        await tx.auditLog.deleteMany({
+          where: { id: { in: credentialLogIds } },
+        });
       }
       if (passwordChangeLogIds.length > 0) {
         await tx.auditLog.deleteMany({
@@ -1450,46 +1495,66 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
     where: { attendanceDay: today },
   });
 
-  const present = new Set<string>();
+  const totalExpectedPresent = await prisma.user.count({
+    where: {
+      isActive: true,
+      NOT: {
+        role: { equals: "guest", mode: "insensitive" },
+      },
+    },
+  });
+
+  const presentUsers = new Set<string>();
   let late = 0;
-  let guests = 0;
-  let timeouts = 0;
+  let guestsToday = 0;
+  let checkedOutUsers = 0;
+  let checkedOutGuests = 0;
+
+  const isGuestCategory = (value: string | null | undefined): boolean =>
+    String(value ?? "")
+      .trim()
+      .toLowerCase() === "guest";
 
   for (const log of logs) {
+    const isGuest = isGuestCategory(log.category);
+
     if (log.attendanceType === "Time In") {
-      if (log.userId) {
-        present.add(log.userId);
-      } else if (log.guestName) {
-        present.add(`guest:${log.guestName.toLowerCase()}`);
+      if (!isGuest && log.userId) {
+        presentUsers.add(log.userId);
       }
-      if (log.status === "Late") {
+
+      if (isGuest) {
+        guestsToday += 1;
+      } else if (log.status === "Late") {
         late += 1;
       }
     }
 
-    if (log.category === "Guest") {
-      guests += 1;
-    }
-
     if (log.attendanceType === "Time Out") {
-      timeouts += 1;
+      if (isGuest) {
+        checkedOutGuests += 1;
+      } else {
+        checkedOutUsers += 1;
+      }
     }
   }
 
   response.json({
-    present: present.size,
+    present: presentUsers.size,
+    presentExpected: totalExpectedPresent,
     late,
-    outside: guests,
-    timeouts,
+    outside: guestsToday,
+    timeouts: checkedOutUsers,
+    checkedOutGuests,
   });
 });
 
 adminRouter.get("/logs", async (request: AuthenticatedRequest, response) => {
   const search = (request.query.search as string | undefined)?.trim() ?? "";
   const date = (request.query.date as string | undefined)?.trim() ?? "";
-  const filterParam = (request.query.filter as string | undefined)?.trim() ?? "";
-  const category =
-    (request.query.category as string | undefined)?.trim() ?? "";
+  const filterParam =
+    (request.query.filter as string | undefined)?.trim() ?? "";
+  const category = (request.query.category as string | undefined)?.trim() ?? "";
 
   const dayKey =
     date ||

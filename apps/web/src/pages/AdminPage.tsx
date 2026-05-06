@@ -35,6 +35,7 @@ const USER_ROLE_OPTIONS = [
   { value: "chief executive", label: "CEO" },
   { value: "employee", label: "Employee" },
   { value: "human resource", label: "HR Manager" },
+  { value: "admin", label: "Admin" },
 ] as const;
 
 const OVERVIEW_ROLE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
@@ -99,6 +100,10 @@ function weekdaySortKey(day: string): number {
   return WEEKDAY_ORDER[day] ?? 99;
 }
 
+function isAdminRole(role: string): boolean {
+  return role.trim().toLowerCase() === "admin";
+}
+
 function sortWeekdaySlots(slots: WeekdaySchedule[]): WeekdaySchedule[] {
   return [...slots].sort(
     (a, b) => weekdaySortKey(a.day) - weekdaySortKey(b.day),
@@ -120,15 +125,13 @@ function deriveDetailEditScheduleState(row: UserDataRow): {
 
   const weekdays = ["mon", "tue", "wed", "thu", "fri"] as const;
   const coversAll =
-    raw.length === 5 &&
-    weekdays.every((d) => raw.some((s) => s.day === d));
+    raw.length === 5 && weekdays.every((d) => raw.some((s) => s.day === d));
   const first = raw[0];
   const uniform =
     coversAll &&
     first &&
     raw.every(
-      (s) =>
-        s.startTime === first.startTime && s.endTime === first.endTime,
+      (s) => s.startTime === first.startTime && s.endTime === first.endTime,
     );
 
   if (uniform && first) {
@@ -246,6 +249,13 @@ type MonthlyAttendanceRow = {
 export function AdminPage({ onSessionChange }: AdminPageProps) {
   const session = readSession();
 
+  useEffect(() => {
+    document.body.classList.add("admin-portal");
+    return () => {
+      document.body.classList.remove("admin-portal");
+    };
+  }, []);
+
   if (!session) {
     return <Navigate to="/login" replace />;
   }
@@ -285,9 +295,11 @@ function AdminContent({
 
   const [stats, setStats] = useState({
     present: 0,
+    presentExpected: 0,
     late: 0,
     outside: 0,
     timeouts: 0,
+    checkedOutGuests: 0,
   });
   const [logs, setLogs] = useState<AttendanceLogRow[]>([]);
   const [search, setSearch] = useState("");
@@ -301,7 +313,9 @@ function AdminContent({
     null,
   );
   const [exportingView, setExportingView] = useState<AdminView | null>(null);
-  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null);
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(
+    null,
+  );
   const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -320,6 +334,7 @@ function AdminContent({
   const [addUserMessageIsError, setAddUserMessageIsError] = useState(false);
   const [showAddUserForm, setShowAddUserForm] = useState(false);
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("all-days");
+  const [disableScheduleForAdmin, setDisableScheduleForAdmin] = useState(false);
   const [allDaysSchedule, setAllDaysSchedule] = useState({
     startTime: "09:00",
     endTime: "17:00",
@@ -332,12 +347,15 @@ function AdminContent({
     attendanceSchedule: [{ day: "mon", startTime: "09:00", endTime: "17:00" }],
   });
   const [usersListPage, setUsersListPage] = useState(1);
-  const [userDetailsRow, setUserDetailsRow] = useState<UserDataRow | null>(null);
-  const [userDetailsEditMode, setUserDetailsEditMode] = useState(false);
-  const [detailOriginalEmail, setDetailOriginalEmail] = useState("");
-  const [detailEditForm, setDetailEditForm] = useState<DetailUserEditState | null>(
+  const [userDetailsRow, setUserDetailsRow] = useState<UserDataRow | null>(
     null,
   );
+  const [userDetailsEditMode, setUserDetailsEditMode] = useState(false);
+  const [detailOriginalEmail, setDetailOriginalEmail] = useState("");
+  const [detailEditForm, setDetailEditForm] =
+    useState<DetailUserEditState | null>(null);
+  const [detailDisableScheduleForAdmin, setDetailDisableScheduleForAdmin] =
+    useState(false);
   const [detailSaveBusy, setDetailSaveBusy] = useState(false);
   const [detailModalMessage, setDetailModalMessage] = useState("");
   const [detailModalMessageIsError, setDetailModalMessageIsError] =
@@ -432,7 +450,11 @@ function AdminContent({
     return `"${text.replace(/"/g, '""')}"`;
   }
 
-  function downloadCsvFile(filename: string, header: string[], rows: string[][]) {
+  function downloadCsvFile(
+    filename: string,
+    header: string[],
+    rows: string[][],
+  ) {
     const lines = [header.map(csvEscape).join(",")];
     for (const row of rows) {
       lines.push(row.map(csvEscape).join(","));
@@ -472,7 +494,12 @@ function AdminContent({
     setConfirmModal(null);
   }
 
-  async function handleExportCsv(target: Extract<AdminView, "overview" | "users" | "credentials" | "shifts" | "attendance">) {
+  async function handleExportCsv(
+    target: Extract<
+      AdminView,
+      "overview" | "users" | "credentials" | "shifts" | "attendance"
+    >,
+  ) {
     if (exportingView) return;
 
     let filterSummary = "No extra filters";
@@ -645,9 +672,11 @@ function AdminContent({
     try {
       const statsResult = await apiRequest<{
         present: number;
+        presentExpected: number;
         late: number;
         outside: number;
         timeouts: number;
+        checkedOutGuests: number;
       }>("/admin/stats");
       const query = new URLSearchParams();
       if (searchQ) query.set("search", searchQ);
@@ -810,6 +839,39 @@ function AdminContent({
     setAddUserMessage("");
   }
 
+  function handleAddUserRoleChange(value: string) {
+    setAddUserForm((prev) => ({
+      ...prev,
+      role: value,
+    }));
+
+    if (isAdminRole(value)) {
+      setDisableScheduleForAdmin(true);
+      setScheduleMode("all-days");
+      setAddUserMessageIsError(false);
+      setAddUserMessage("");
+      return;
+    }
+
+    setDisableScheduleForAdmin(false);
+  }
+
+  function handleDetailRoleChange(value: string) {
+    setDetailDisableScheduleForAdmin(isAdminRole(value));
+    setDetailEditForm((prev) => {
+      if (!prev) return prev;
+      if (isAdminRole(value)) {
+        return {
+          ...prev,
+          role: value,
+          scheduleMode: "all-days",
+          attendanceSchedule: [],
+        };
+      }
+      return { ...prev, role: value };
+    });
+  }
+
   function removeScheduleSlot(index: number) {
     setAddUserForm((prev) => ({
       ...prev,
@@ -821,15 +883,18 @@ function AdminContent({
 
   async function handleAddUserData(event: React.FormEvent) {
     event.preventDefault();
+    const role = addUserForm.role.trim();
     const schedulePayload =
-      scheduleMode === "all-days"
-        ? WEEKDAY_OPTIONS.map((weekday) => ({
-            day: weekday.value,
-            startTime: allDaysSchedule.startTime,
-            endTime: allDaysSchedule.endTime,
-          }))
-        : addUserForm.attendanceSchedule;
-    if (schedulePayload.length === 0) {
+      isAdminRole(role) && disableScheduleForAdmin
+        ? []
+        : scheduleMode === "all-days"
+          ? WEEKDAY_OPTIONS.map((weekday) => ({
+              day: weekday.value,
+              startTime: allDaysSchedule.startTime,
+              endTime: allDaysSchedule.endTime,
+            }))
+          : addUserForm.attendanceSchedule;
+    if (!isAdminRole(role) && schedulePayload.length === 0) {
       setAddUserMessageIsError(true);
       setAddUserMessage("Add at least one weekday schedule.");
       return;
@@ -843,7 +908,7 @@ function AdminContent({
         method: "POST",
         body: JSON.stringify({
           email: addUserForm.email.trim().toLowerCase(),
-          role: addUserForm.role.trim(),
+          role,
           fullName: addUserForm.fullName.trim(),
           uniqueId: addUserForm.uniqueId.trim() || null,
           attendanceSchedule: schedulePayload,
@@ -857,13 +922,16 @@ function AdminContent({
       );
       setShowAddUserForm(false);
       setScheduleMode("all-days");
+      setDisableScheduleForAdmin(false);
       setAllDaysSchedule({ startTime: "09:00", endTime: "17:00" });
       setAddUserForm({
         email: "",
         role: "",
         fullName: "",
         uniqueId: "",
-        attendanceSchedule: [{ day: "mon", startTime: "09:00", endTime: "17:00" }],
+        attendanceSchedule: [
+          { day: "mon", startTime: "09:00", endTime: "17:00" },
+        ],
       });
       await loadUsersData();
     } catch (error) {
@@ -889,6 +957,7 @@ function AdminContent({
     setUserDetailsRow(null);
     setUserDetailsEditMode(false);
     setDetailEditForm(null);
+    setDetailDisableScheduleForAdmin(false);
     setDetailModalMessage("");
     setDetailModalMessageIsError(false);
     setDetailSaveBusy(false);
@@ -897,6 +966,7 @@ function AdminContent({
   function startEditInDetails() {
     if (!userDetailsRow) return;
     const sch = deriveDetailEditScheduleState(userDetailsRow);
+    const adminRole = isAdminRole(userDetailsRow.role);
     setDetailEditForm({
       email: userDetailsRow.email,
       role: userDetailsRow.role,
@@ -906,8 +976,9 @@ function AdminContent({
       isActive: userDetailsRow.isActive,
       scheduleMode: sch.scheduleMode,
       allDaysSchedule: sch.allDaysSchedule,
-      attendanceSchedule: sch.attendanceSchedule,
+      attendanceSchedule: adminRole ? [] : sch.attendanceSchedule,
     });
+    setDetailDisableScheduleForAdmin(adminRole);
     setUserDetailsEditMode(true);
     setDetailModalMessage("");
     setDetailModalMessageIsError(false);
@@ -916,6 +987,7 @@ function AdminContent({
   function cancelEditInDetails() {
     setUserDetailsEditMode(false);
     setDetailEditForm(null);
+    setDetailDisableScheduleForAdmin(false);
     setDetailModalMessage("");
     setDetailModalMessageIsError(false);
   }
@@ -967,16 +1039,19 @@ function AdminContent({
     event.preventDefault();
     if (!detailEditForm) return;
 
+    const role = detailEditForm.role.trim();
     const schedulePayload =
-      detailEditForm.scheduleMode === "all-days"
-        ? WEEKDAY_OPTIONS.map((weekday) => ({
-            day: weekday.value,
-            startTime: detailEditForm.allDaysSchedule.startTime,
-            endTime: detailEditForm.allDaysSchedule.endTime,
-          }))
-        : detailEditForm.attendanceSchedule;
+      isAdminRole(role) && detailDisableScheduleForAdmin
+        ? []
+        : detailEditForm.scheduleMode === "all-days"
+          ? WEEKDAY_OPTIONS.map((weekday) => ({
+              day: weekday.value,
+              startTime: detailEditForm.allDaysSchedule.startTime,
+              endTime: detailEditForm.allDaysSchedule.endTime,
+            }))
+          : detailEditForm.attendanceSchedule;
 
-    if (schedulePayload.length === 0) {
+    if (!isAdminRole(role) && schedulePayload.length === 0) {
       setDetailModalMessageIsError(true);
       setDetailModalMessage("Add at least one weekday in the schedule.");
       return;
@@ -992,7 +1067,7 @@ function AdminContent({
           method: "PUT",
           body: JSON.stringify({
             email: detailEditForm.email.trim().toLowerCase(),
-            role: detailEditForm.role.trim(),
+            role,
             fullName: detailEditForm.fullName.trim(),
             uniqueId: detailEditForm.uniqueId.trim() || null,
             isActive: detailEditForm.isActive,
@@ -1037,7 +1112,8 @@ function AdminContent({
     } catch (error) {
       await requestConfirmation({
         title: "Delete failed",
-        message: error instanceof Error ? error.message : "Failed to delete user.",
+        message:
+          error instanceof Error ? error.message : "Failed to delete user.",
         confirmLabel: "OK",
         cancelLabel: "",
       });
@@ -1099,7 +1175,9 @@ function AdminContent({
       await Promise.all([loadCredentials(), loadUsersData()]);
     } catch (error) {
       setPasswordMessage(
-        error instanceof Error ? error.message : "Failed to delete credentials.",
+        error instanceof Error
+          ? error.message
+          : "Failed to delete credentials.",
       );
     } finally {
       setPasswordBusy(false);
@@ -1235,8 +1313,7 @@ function AdminContent({
       coversAll &&
       first &&
       slots.every(
-        (s) =>
-          s.startTime === first.startTime && s.endTime === first.endTime,
+        (s) => s.startTime === first.startTime && s.endTime === first.endTime,
       );
 
     if (uniform && first) {
@@ -1313,7 +1390,9 @@ function AdminContent({
       await requestConfirmation({
         title: "Delete failed",
         message:
-          error instanceof Error ? error.message : "Failed to delete attendance.",
+          error instanceof Error
+            ? error.message
+            : "Failed to delete attendance.",
         confirmLabel: "OK",
         cancelLabel: "",
       });
@@ -1459,7 +1538,7 @@ function AdminContent({
             <section className="stats-grid">
               <MetricCard
                 label="Present Today"
-                value={stats.present}
+                value={`${stats.present} / ${stats.presentExpected}`}
                 accent="blue"
                 icon="👥"
               />
@@ -1476,10 +1555,16 @@ function AdminContent({
                 icon="🧑‍🤝‍🧑"
               />
               <MetricCard
-                label="Checked Out"
+                label="Checked Out User"
                 value={stats.timeouts}
                 accent="green"
                 icon="✅"
+              />
+              <MetricCard
+                label="Checked Out Guest"
+                value={stats.checkedOutGuests}
+                accent="green"
+                icon="🚪"
               />
             </section>
 
@@ -1604,6 +1689,7 @@ function AdminContent({
                       <th>Unique ID</th>
                       <th>Name</th>
                       <th>Role</th>
+                      <th>Purpose</th>
                       <th>Type</th>
                       <th>Status</th>
                       <th>Image</th>
@@ -1613,7 +1699,7 @@ function AdminContent({
                   <tbody>
                     {logs.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="empty-row">
+                        <td colSpan={9} className="empty-row">
                           No records found.
                         </td>
                       </tr>
@@ -1626,6 +1712,7 @@ function AdminContent({
                             <strong>{log.fullName}</strong>
                           </td>
                           <td>{log.category}</td>
+                          <td>{log.purpose ?? "N/A"}</td>
                           <td>
                             <span
                               className={
@@ -1668,7 +1755,9 @@ function AdminContent({
                               disabled={deletingLogId === log.id}
                               onClick={() => void handleDeleteAttendance(log)}
                             >
-                              {deletingLogId === log.id ? "Deleting..." : "Delete"}
+                              {deletingLogId === log.id
+                                ? "Deleting..."
+                                : "Delete"}
                             </button>
                           </td>
                         </tr>
@@ -1680,7 +1769,8 @@ function AdminContent({
               {logs.length > 0 ? (
                 <div className="users-pagination">
                   <span className="users-pagination-meta">
-                    Page {logsPageClamped} of {logsTotalPages} · {logs.length} record
+                    Page {logsPageClamped} of {logsTotalPages} · {logs.length}{" "}
+                    record
                     {logs.length === 1 ? "" : "s"}
                   </span>
                   <div className="users-pagination-actions">
@@ -1731,7 +1821,10 @@ function AdminContent({
                   </button>
                 </div>
               ) : (
-                <form className="users-add-form detailed" onSubmit={handleAddUserData}>
+                <form
+                  className="users-add-form detailed"
+                  onSubmit={handleAddUserData}
+                >
                   <input
                     className="search-input"
                     placeholder="Gmail"
@@ -1749,10 +1842,7 @@ function AdminContent({
                     className="search-input"
                     value={addUserForm.role}
                     onChange={(event) =>
-                      setAddUserForm((prev) => ({
-                        ...prev,
-                        role: event.target.value,
-                      }))
+                      handleAddUserRoleChange(event.target.value)
                     }
                     required
                   >
@@ -1763,6 +1853,18 @@ function AdminContent({
                       </option>
                     ))}
                   </select>
+                  {isAdminRole(addUserForm.role) ? (
+                    <label className="admin-schedule-toggle">
+                      <input
+                        type="checkbox"
+                        checked={disableScheduleForAdmin}
+                        onChange={(event) =>
+                          setDisableScheduleForAdmin(event.target.checked)
+                        }
+                      />
+                      Disable attendance schedule for admin
+                    </label>
+                  ) : null}
                   <input
                     className="search-input"
                     placeholder="Name"
@@ -1787,130 +1889,159 @@ function AdminContent({
                     }
                   />
                   <div className="schedule-editor">
-                    <div className="schedule-head">
-                      <strong>Attendance Schedule (Mon-Fri)</strong>
-                      <div className="schedule-head-actions">
-                        <button
-                          type="button"
-                          className={
-                            scheduleMode === "all-days"
-                              ? "ghost-btn active-schedule-mode"
-                              : "ghost-btn"
-                          }
-                          onClick={applyScheduleToAllWeekdays}
-                        >
-                          Apply to All Weekdays
-                        </button>
-                        <button
-                          type="button"
-                          className={
-                            scheduleMode === "custom"
-                              ? "ghost-btn active-schedule-mode"
-                              : "ghost-btn"
-                          }
-                          onClick={() => {
-                            setScheduleMode("custom");
-                            if (addUserForm.attendanceSchedule.length === 0) {
-                              setAddUserForm((prev) => ({
-                                ...prev,
-                                attendanceSchedule: [
-                                  {
-                                    day: "mon",
-                                    startTime: "09:00",
-                                    endTime: "17:00",
-                                  },
-                                ],
-                              }));
-                            }
-                          }}
-                        >
-                          Add Custom Day
-                        </button>
-                      </div>
-                    </div>
-                    {scheduleMode === "all-days" ? (
-                      <div className="schedule-row all-days-row">
-                        <div className="all-days-label">Mon - Fri</div>
-                        <input
-                          type="time"
-                          value={allDaysSchedule.startTime}
-                          onChange={(event) =>
-                            setAllDaysSchedule((prev) => ({
-                              ...prev,
-                              startTime: event.target.value,
-                            }))
-                          }
-                          required
-                        />
-                        <input
-                          type="time"
-                          value={allDaysSchedule.endTime}
-                          onChange={(event) =>
-                            setAllDaysSchedule((prev) => ({
-                              ...prev,
-                              endTime: event.target.value,
-                            }))
-                          }
-                          required
-                        />
+                    {isAdminRole(addUserForm.role) &&
+                    disableScheduleForAdmin ? (
+                      <div className="schedule-disabled-note">
+                        Attendance schedule is disabled for admin users.
                       </div>
                     ) : (
                       <>
-                        {addUserForm.attendanceSchedule.map((slot, index) => (
-                          <div className="schedule-row" key={`${slot.day}-${index}`}>
-                            <select
-                              value={slot.day}
-                              onChange={(event) =>
-                                updateAddUserSchedule(index, "day", event.target.value)
-                              }
-                            >
-                              {WEEKDAY_OPTIONS.map((weekdayOption) => (
-                                <option
-                                  key={weekdayOption.value}
-                                  value={weekdayOption.value}
-                                >
-                                  {weekdayOption.label}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              type="time"
-                              value={slot.startTime}
-                              onChange={(event) =>
-                                updateAddUserSchedule(
-                                  index,
-                                  "startTime",
-                                  event.target.value,
-                                )
-                              }
-                              required
-                            />
-                            <input
-                              type="time"
-                              value={slot.endTime}
-                              onChange={(event) =>
-                                updateAddUserSchedule(index, "endTime", event.target.value)
-                              }
-                              required
-                            />
+                        <div className="schedule-head">
+                          <strong>Attendance Schedule (Mon-Fri)</strong>
+                          <div className="schedule-head-actions">
                             <button
                               type="button"
-                              className="ghost-btn danger"
-                              onClick={() => removeScheduleSlot(index)}
-                              disabled={addUserForm.attendanceSchedule.length === 1}
+                              className={
+                                scheduleMode === "all-days"
+                                  ? "ghost-btn active-schedule-mode"
+                                  : "ghost-btn"
+                              }
+                              onClick={applyScheduleToAllWeekdays}
                             >
-                              Remove
+                              Apply to All Weekdays
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                scheduleMode === "custom"
+                                  ? "ghost-btn active-schedule-mode"
+                                  : "ghost-btn"
+                              }
+                              onClick={() => {
+                                setScheduleMode("custom");
+                                if (
+                                  addUserForm.attendanceSchedule.length === 0
+                                ) {
+                                  setAddUserForm((prev) => ({
+                                    ...prev,
+                                    attendanceSchedule: [
+                                      {
+                                        day: "mon",
+                                        startTime: "09:00",
+                                        endTime: "17:00",
+                                      },
+                                    ],
+                                  }));
+                                }
+                              }}
+                            >
+                              Add Custom Day
                             </button>
                           </div>
-                        ))}
-                        <button
-                          type="button"
-                          className="ghost-btn add-custom-day-btn"
-                          onClick={addScheduleSlot}
-                          disabled={addUserForm.attendanceSchedule.length >= 5}
-                        >
-                          Add One More Day
-                        </button>
+                        </div>
+                        {scheduleMode === "all-days" ? (
+                          <div className="schedule-row all-days-row">
+                            <div className="all-days-label">Mon - Fri</div>
+                            <input
+                              type="time"
+                              value={allDaysSchedule.startTime}
+                              onChange={(event) =>
+                                setAllDaysSchedule((prev) => ({
+                                  ...prev,
+                                  startTime: event.target.value,
+                                }))
+                              }
+                              required
+                            />
+                            <input
+                              type="time"
+                              value={allDaysSchedule.endTime}
+                              onChange={(event) =>
+                                setAllDaysSchedule((prev) => ({
+                                  ...prev,
+                                  endTime: event.target.value,
+                                }))
+                              }
+                              required
+                            />
+                          </div>
+                        ) : (
+                          <>
+                            {addUserForm.attendanceSchedule.map(
+                              (slot, index) => (
+                                <div
+                                  className="schedule-row"
+                                  key={`${slot.day}-${index}`}
+                                >
+                                  <select
+                                    value={slot.day}
+                                    onChange={(event) =>
+                                      updateAddUserSchedule(
+                                        index,
+                                        "day",
+                                        event.target.value,
+                                      )
+                                    }
+                                  >
+                                    {WEEKDAY_OPTIONS.map((weekdayOption) => (
+                                      <option
+                                        key={weekdayOption.value}
+                                        value={weekdayOption.value}
+                                      >
+                                        {weekdayOption.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <input
+                                    type="time"
+                                    value={slot.startTime}
+                                    onChange={(event) =>
+                                      updateAddUserSchedule(
+                                        index,
+                                        "startTime",
+                                        event.target.value,
+                                      )
+                                    }
+                                    required
+                                  />
+                                  <input
+                                    type="time"
+                                    value={slot.endTime}
+                                    onChange={(event) =>
+                                      updateAddUserSchedule(
+                                        index,
+                                        "endTime",
+                                        event.target.value,
+                                      )
+                                    }
+                                    required
+                                  />
+                                  <button
+                                    type="button"
+                                    className="ghost-btn danger"
+                                    onClick={() => removeScheduleSlot(index)}
+                                    disabled={
+                                      addUserForm.attendanceSchedule.length ===
+                                      1
+                                    }
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              ),
+                            )}
+                            <button
+                              type="button"
+                              className="ghost-btn add-custom-day-btn"
+                              onClick={addScheduleSlot}
+                              disabled={
+                                addUserForm.attendanceSchedule.length >= 5
+                              }
+                            >
+                              Add One More Day
+                            </button>
+                          </>
+                        )}
                       </>
                     )}
                   </div>
@@ -1953,7 +2084,10 @@ function AdminContent({
                   aria-label="Filter users by role"
                 >
                   {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
-                    <option key={`users-${opt.value || "all"}`} value={opt.value}>
+                    <option
+                      key={`users-${opt.value || "all"}`}
+                      value={opt.value}
+                    >
                       {opt.value === "" ? "All roles" : opt.label}
                     </option>
                   ))}
@@ -2040,7 +2174,9 @@ function AdminContent({
                       type="button"
                       className="ghost-btn slim"
                       disabled={usersPageClamped <= 1}
-                      onClick={() => setUsersListPage((p) => Math.max(1, p - 1))}
+                      onClick={() =>
+                        setUsersListPage((p) => Math.max(1, p - 1))
+                      }
                     >
                       Previous
                     </button>
@@ -2049,7 +2185,9 @@ function AdminContent({
                       className="ghost-btn slim"
                       disabled={usersPageClamped >= usersTotalPages}
                       onClick={() =>
-                        setUsersListPage((p) => Math.min(usersTotalPages, p + 1))
+                        setUsersListPage((p) =>
+                          Math.min(usersTotalPages, p + 1),
+                        )
                       }
                     >
                       Next
@@ -2058,381 +2196,437 @@ function AdminContent({
                 </div>
               ) : null}
 
-              {userDetailsRow ? createPortal(
-                <div
-                  className="admin-modal-backdrop"
-                  role="presentation"
-                  onClick={closeUserDetails}
-                >
-                  <div
-                    className="admin-modal-card"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="user-details-title"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <div className="admin-modal-head">
-                      <h3 id="user-details-title">User details</h3>
-                      <button
-                        type="button"
-                        className="ghost-btn modal-close-btn"
-                        onClick={closeUserDetails}
-                        aria-label="Close"
+              {userDetailsRow
+                ? createPortal(
+                    <div
+                      className="admin-modal-backdrop"
+                      role="presentation"
+                      onClick={closeUserDetails}
+                    >
+                      <div
+                        className="admin-modal-card"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="user-details-title"
+                        onClick={(event) => event.stopPropagation()}
                       >
-                        ✕
-                      </button>
-                    </div>
-
-                    {!userDetailsEditMode ? (
-                      <div className="admin-modal-body">
-                        <dl className="detail-dl">
-                          <div>
-                            <dt>Gmail</dt>
-                            <dd>{userDetailsRow.email}</dd>
-                          </div>
-                          <div>
-                            <dt>Generated</dt>
-                            <dd>
-                              {userDetailsRow.generated ? "TRUE" : "FALSE"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Role</dt>
-                            <dd>{userDetailsRow.role}</dd>
-                          </div>
-                          <div>
-                            <dt>Name</dt>
-                            <dd>{userDetailsRow.fullName}</dd>
-                          </div>
-                          <div>
-                            <dt>Unique ID</dt>
-                            <dd>{userDetailsRow.uniqueId}</dd>
-                          </div>
-                          <div>
-                            <dt>Active</dt>
-                            <dd>{userDetailsRow.isActive ? "Yes" : "No"}</dd>
-                          </div>
-                          <div className="detail-dl-span">
-                            <dt>Schedule</dt>
-                            <dd>{renderUserScheduleReadOnly(userDetailsRow)}</dd>
-                          </div>
-                        </dl>
-                        <div className="admin-modal-actions">
+                        <div className="admin-modal-head">
+                          <h3 id="user-details-title">User details</h3>
                           <button
                             type="button"
-                            className="primary-btn slim"
-                            onClick={startEditInDetails}
+                            className="ghost-btn modal-close-btn"
+                            onClick={closeUserDetails}
+                            aria-label="Close"
                           >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="ghost-btn danger"
-                            onClick={() =>
-                              void handleDeleteUser(userDetailsRow.email)
-                            }
-                          >
-                            Delete user
+                            ✕
                           </button>
                         </div>
-                      </div>
-                    ) : detailEditForm ? (
-                      <form
-                        className="admin-modal-body"
-                        onSubmit={handleDetailSave}
-                      >
-                        <div className="users-add-form detailed modal-edit-form">
-                          <input
-                            className="search-input"
-                            placeholder="Gmail"
-                            value={detailEditForm.email}
-                            onChange={(event) =>
-                              setDetailEditForm((prev) =>
-                                prev
-                                  ? { ...prev, email: event.target.value }
-                                  : prev,
-                              )
-                            }
-                            type="email"
-                            required
-                          />
-                          <select
-                            className="search-input"
-                            value={detailEditForm.role}
-                            onChange={(event) =>
-                              setDetailEditForm((prev) =>
-                                prev
-                                  ? { ...prev, role: event.target.value }
-                                  : prev,
-                              )
-                            }
-                            required
-                          >
-                            <option value="">Select role</option>
-                            {USER_ROLE_OPTIONS.map((roleOption) => (
-                              <option
-                                key={roleOption.value}
-                                value={roleOption.value}
+
+                        {!userDetailsEditMode ? (
+                          <div className="admin-modal-body">
+                            <dl className="detail-dl">
+                              <div>
+                                <dt>Gmail</dt>
+                                <dd>{userDetailsRow.email}</dd>
+                              </div>
+                              <div>
+                                <dt>Generated</dt>
+                                <dd>
+                                  {userDetailsRow.generated ? "TRUE" : "FALSE"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Role</dt>
+                                <dd>{userDetailsRow.role}</dd>
+                              </div>
+                              <div>
+                                <dt>Name</dt>
+                                <dd>{userDetailsRow.fullName}</dd>
+                              </div>
+                              <div>
+                                <dt>Unique ID</dt>
+                                <dd>{userDetailsRow.uniqueId}</dd>
+                              </div>
+                              <div>
+                                <dt>Active</dt>
+                                <dd>
+                                  {userDetailsRow.isActive ? "Yes" : "No"}
+                                </dd>
+                              </div>
+                              <div className="detail-dl-span">
+                                <dt>Schedule</dt>
+                                <dd>
+                                  {renderUserScheduleReadOnly(userDetailsRow)}
+                                </dd>
+                              </div>
+                            </dl>
+                            <div className="admin-modal-actions">
+                              <button
+                                type="button"
+                                className="primary-btn slim"
+                                onClick={startEditInDetails}
                               >
-                                {roleOption.label}
-                              </option>
-                            ))}
-                          </select>
-                          <input
-                            className="search-input"
-                            placeholder="Name"
-                            value={detailEditForm.fullName}
-                            onChange={(event) =>
-                              setDetailEditForm((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      fullName: event.target.value,
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost-btn danger"
+                                onClick={() =>
+                                  void handleDeleteUser(userDetailsRow.email)
+                                }
+                              >
+                                Delete user
+                              </button>
+                            </div>
+                          </div>
+                        ) : detailEditForm ? (
+                          <form
+                            className="admin-modal-body"
+                            onSubmit={handleDetailSave}
+                          >
+                            <div className="users-add-form detailed modal-edit-form">
+                              <input
+                                className="search-input"
+                                placeholder="Gmail"
+                                value={detailEditForm.email}
+                                onChange={(event) =>
+                                  setDetailEditForm((prev) =>
+                                    prev
+                                      ? { ...prev, email: event.target.value }
+                                      : prev,
+                                  )
+                                }
+                                type="email"
+                                required
+                              />
+                              <select
+                                className="search-input"
+                                value={detailEditForm.role}
+                                onChange={(event) =>
+                                  handleDetailRoleChange(event.target.value)
+                                }
+                                required
+                              >
+                                <option value="">Select role</option>
+                                {USER_ROLE_OPTIONS.map((roleOption) => (
+                                  <option
+                                    key={roleOption.value}
+                                    value={roleOption.value}
+                                  >
+                                    {roleOption.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {isAdminRole(detailEditForm.role) ? (
+                                <label className="admin-schedule-toggle">
+                                  <input
+                                    type="checkbox"
+                                    checked={detailDisableScheduleForAdmin}
+                                    onChange={(event) =>
+                                      setDetailDisableScheduleForAdmin(
+                                        event.target.checked,
+                                      )
                                     }
-                                  : prev,
-                              )
-                            }
-                            required
-                          />
-                          <input
-                            className="search-input"
-                            placeholder="Unique ID"
-                            value={detailEditForm.uniqueId}
-                            onChange={(event) =>
-                              setDetailEditForm((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      uniqueId: event.target.value,
-                                    }
-                                  : prev,
-                              )
-                            }
-                          />
-                          <label className="edit-active-toggle">
-                            <input
-                              type="checkbox"
-                              checked={detailEditForm.isActive}
-                              onChange={(event) =>
-                                setDetailEditForm((prev) =>
-                                  prev
-                                    ? {
-                                        ...prev,
-                                        isActive: event.target.checked,
-                                      }
-                                    : prev,
-                                )
-                              }
-                            />
-                            Active
-                          </label>
-                          <div className="schedule-editor">
-                            <div className="schedule-head">
-                              <strong>Attendance schedule</strong>
-                              <div className="schedule-head-actions">
-                                <button
-                                  type="button"
-                                  className={
-                                    detailEditForm.scheduleMode === "all-days"
-                                      ? "ghost-btn active-schedule-mode"
-                                      : "ghost-btn"
-                                  }
-                                  onClick={() =>
+                                  />
+                                  Disable attendance schedule for admin
+                                </label>
+                              ) : null}
+                              <input
+                                className="search-input"
+                                placeholder="Name"
+                                value={detailEditForm.fullName}
+                                onChange={(event) =>
+                                  setDetailEditForm((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          fullName: event.target.value,
+                                        }
+                                      : prev,
+                                  )
+                                }
+                                required
+                              />
+                              <input
+                                className="search-input"
+                                placeholder="Unique ID"
+                                value={detailEditForm.uniqueId}
+                                onChange={(event) =>
+                                  setDetailEditForm((prev) =>
+                                    prev
+                                      ? {
+                                          ...prev,
+                                          uniqueId: event.target.value,
+                                        }
+                                      : prev,
+                                  )
+                                }
+                              />
+                              <label className="edit-active-toggle">
+                                <input
+                                  type="checkbox"
+                                  checked={detailEditForm.isActive}
+                                  onChange={(event) =>
                                     setDetailEditForm((prev) =>
                                       prev
-                                        ? { ...prev, scheduleMode: "all-days" }
+                                        ? {
+                                            ...prev,
+                                            isActive: event.target.checked,
+                                          }
                                         : prev,
                                     )
                                   }
-                                >
-                                  Apply to all weekdays
-                                </button>
-                                <button
-                                  type="button"
-                                  className={
-                                    detailEditForm.scheduleMode === "custom"
-                                      ? "ghost-btn active-schedule-mode"
-                                      : "ghost-btn"
-                                  }
-                                  onClick={() =>
-                                    setDetailEditForm((prev) => {
-                                      if (!prev) return prev;
-                                      if (prev.attendanceSchedule.length === 0) {
-                                        return {
-                                          ...prev,
-                                          scheduleMode: "custom",
-                                          attendanceSchedule: [
-                                            {
-                                              day: "mon",
-                                              startTime: "09:00",
-                                              endTime: "17:00",
-                                            },
-                                          ],
-                                        };
+                                />
+                                Active
+                              </label>
+                              <div className="schedule-editor">
+                                <div className="schedule-head">
+                                  <strong>Attendance schedule</strong>
+                                  <div className="schedule-head-actions">
+                                    <button
+                                      type="button"
+                                      className={
+                                        detailEditForm.scheduleMode ===
+                                        "all-days"
+                                          ? "ghost-btn active-schedule-mode"
+                                          : "ghost-btn"
                                       }
-                                      return {
-                                        ...prev,
-                                        scheduleMode: "custom",
-                                      };
-                                    })
-                                  }
-                                >
-                                  Custom by day
-                                </button>
+                                      onClick={() =>
+                                        setDetailEditForm((prev) => {
+                                          if (!prev) return prev;
+                                          if (
+                                            isAdminRole(prev.role) &&
+                                            detailDisableScheduleForAdmin
+                                          ) {
+                                            return prev;
+                                          }
+                                          return {
+                                            ...prev,
+                                            scheduleMode: "all-days",
+                                          };
+                                        })
+                                      }
+                                      disabled={
+                                        isAdminRole(detailEditForm.role) &&
+                                        detailDisableScheduleForAdmin
+                                      }
+                                    >
+                                      Apply to all weekdays
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={
+                                        detailEditForm.scheduleMode === "custom"
+                                          ? "ghost-btn active-schedule-mode"
+                                          : "ghost-btn"
+                                      }
+                                      onClick={() =>
+                                        setDetailEditForm((prev) => {
+                                          if (!prev) return prev;
+                                          if (
+                                            isAdminRole(prev.role) &&
+                                            detailDisableScheduleForAdmin
+                                          ) {
+                                            return prev;
+                                          }
+                                          if (
+                                            prev.attendanceSchedule.length === 0
+                                          ) {
+                                            return {
+                                              ...prev,
+                                              scheduleMode: "custom",
+                                              attendanceSchedule: [
+                                                {
+                                                  day: "mon",
+                                                  startTime: "09:00",
+                                                  endTime: "17:00",
+                                                },
+                                              ],
+                                            };
+                                          }
+                                          return {
+                                            ...prev,
+                                            scheduleMode: "custom",
+                                          };
+                                        })
+                                      }
+                                      disabled={
+                                        isAdminRole(detailEditForm.role) &&
+                                        detailDisableScheduleForAdmin
+                                      }
+                                    >
+                                      Custom by day
+                                    </button>
+                                  </div>
+                                </div>
+                                {isAdminRole(detailEditForm.role) &&
+                                detailDisableScheduleForAdmin ? (
+                                  <div className="schedule-disabled-note">
+                                    Attendance schedule is disabled for admin
+                                    users.
+                                  </div>
+                                ) : detailEditForm.scheduleMode ===
+                                  "all-days" ? (
+                                  <div className="schedule-row all-days-row">
+                                    <div className="all-days-label">
+                                      Mon - Fri
+                                    </div>
+                                    <input
+                                      type="time"
+                                      value={
+                                        detailEditForm.allDaysSchedule.startTime
+                                      }
+                                      onChange={(event) =>
+                                        setDetailEditForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                allDaysSchedule: {
+                                                  ...prev.allDaysSchedule,
+                                                  startTime: event.target.value,
+                                                },
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      required
+                                    />
+                                    <input
+                                      type="time"
+                                      value={
+                                        detailEditForm.allDaysSchedule.endTime
+                                      }
+                                      onChange={(event) =>
+                                        setDetailEditForm((prev) =>
+                                          prev
+                                            ? {
+                                                ...prev,
+                                                allDaysSchedule: {
+                                                  ...prev.allDaysSchedule,
+                                                  endTime: event.target.value,
+                                                },
+                                              }
+                                            : prev,
+                                        )
+                                      }
+                                      required
+                                    />
+                                  </div>
+                                ) : (
+                                  <>
+                                    {detailEditForm.attendanceSchedule.map(
+                                      (slot, index) => (
+                                        <div
+                                          className="schedule-row"
+                                          key={`${slot.day}-${index}`}
+                                        >
+                                          <select
+                                            value={slot.day}
+                                            onChange={(event) =>
+                                              updateDetailScheduleSlot(
+                                                index,
+                                                "day",
+                                                event.target.value,
+                                              )
+                                            }
+                                          >
+                                            {WEEKDAY_OPTIONS.map(
+                                              (weekdayOption) => (
+                                                <option
+                                                  key={weekdayOption.value}
+                                                  value={weekdayOption.value}
+                                                >
+                                                  {weekdayOption.label}
+                                                </option>
+                                              ),
+                                            )}
+                                          </select>
+                                          <input
+                                            type="time"
+                                            value={slot.startTime}
+                                            onChange={(event) =>
+                                              updateDetailScheduleSlot(
+                                                index,
+                                                "startTime",
+                                                event.target.value,
+                                              )
+                                            }
+                                            required
+                                          />
+                                          <input
+                                            type="time"
+                                            value={slot.endTime}
+                                            onChange={(event) =>
+                                              updateDetailScheduleSlot(
+                                                index,
+                                                "endTime",
+                                                event.target.value,
+                                              )
+                                            }
+                                            required
+                                          />
+                                          <button
+                                            type="button"
+                                            className="ghost-btn danger"
+                                            onClick={() =>
+                                              detailRemoveScheduleSlot(index)
+                                            }
+                                            disabled={
+                                              detailEditForm.attendanceSchedule
+                                                .length === 1
+                                            }
+                                          >
+                                            Remove
+                                          </button>
+                                        </div>
+                                      ),
+                                    )}
+                                    <button
+                                      type="button"
+                                      className="ghost-btn add-custom-day-btn"
+                                      onClick={detailAddScheduleSlot}
+                                      disabled={
+                                        detailEditForm.attendanceSchedule
+                                          .length >= 5
+                                      }
+                                    >
+                                      Add day
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </div>
-                            {detailEditForm.scheduleMode === "all-days" ? (
-                              <div className="schedule-row all-days-row">
-                                <div className="all-days-label">Mon - Fri</div>
-                                <input
-                                  type="time"
-                                  value={detailEditForm.allDaysSchedule.startTime}
-                                  onChange={(event) =>
-                                    setDetailEditForm((prev) =>
-                                      prev
-                                        ? {
-                                            ...prev,
-                                            allDaysSchedule: {
-                                              ...prev.allDaysSchedule,
-                                              startTime: event.target.value,
-                                            },
-                                          }
-                                        : prev,
-                                    )
-                                  }
-                                  required
-                                />
-                                <input
-                                  type="time"
-                                  value={detailEditForm.allDaysSchedule.endTime}
-                                  onChange={(event) =>
-                                    setDetailEditForm((prev) =>
-                                      prev
-                                        ? {
-                                            ...prev,
-                                            allDaysSchedule: {
-                                              ...prev.allDaysSchedule,
-                                              endTime: event.target.value,
-                                            },
-                                          }
-                                        : prev,
-                                    )
-                                  }
-                                  required
-                                />
+                            {detailModalMessage ? (
+                              <div
+                                className={`notice ${detailModalMessageIsError ? "error" : "success"} modal-notice`}
+                              >
+                                {detailModalMessage}
                               </div>
-                            ) : (
-                              <>
-                                {detailEditForm.attendanceSchedule.map(
-                                  (slot, index) => (
-                                    <div
-                                      className="schedule-row"
-                                      key={`${slot.day}-${index}`}
-                                    >
-                                      <select
-                                        value={slot.day}
-                                        onChange={(event) =>
-                                          updateDetailScheduleSlot(
-                                            index,
-                                            "day",
-                                            event.target.value,
-                                          )
-                                        }
-                                      >
-                                        {WEEKDAY_OPTIONS.map((weekdayOption) => (
-                                          <option
-                                            key={weekdayOption.value}
-                                            value={weekdayOption.value}
-                                          >
-                                            {weekdayOption.label}
-                                          </option>
-                                        ))}
-                                      </select>
-                                      <input
-                                        type="time"
-                                        value={slot.startTime}
-                                        onChange={(event) =>
-                                          updateDetailScheduleSlot(
-                                            index,
-                                            "startTime",
-                                            event.target.value,
-                                          )
-                                        }
-                                        required
-                                      />
-                                      <input
-                                        type="time"
-                                        value={slot.endTime}
-                                        onChange={(event) =>
-                                          updateDetailScheduleSlot(
-                                            index,
-                                            "endTime",
-                                            event.target.value,
-                                          )
-                                        }
-                                        required
-                                      />
-                                      <button
-                                        type="button"
-                                        className="ghost-btn danger"
-                                        onClick={() =>
-                                          detailRemoveScheduleSlot(index)
-                                        }
-                                        disabled={
-                                          detailEditForm.attendanceSchedule
-                                            .length === 1
-                                        }
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
-                                  ),
-                                )}
-                                <button
-                                  type="button"
-                                  className="ghost-btn add-custom-day-btn"
-                                  onClick={detailAddScheduleSlot}
-                                  disabled={
-                                    detailEditForm.attendanceSchedule.length >=
-                                    5
-                                  }
-                                >
-                                  Add day
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        {detailModalMessage ? (
-                          <div
-                            className={`notice ${detailModalMessageIsError ? "error" : "success"} modal-notice`}
-                          >
-                            {detailModalMessage}
-                          </div>
+                            ) : null}
+                            <div className="admin-modal-actions">
+                              <button
+                                type="submit"
+                                className="primary-btn slim"
+                                disabled={detailSaveBusy}
+                              >
+                                {detailSaveBusy ? "Saving…" : "Save changes"}
+                              </button>
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                onClick={cancelEditInDetails}
+                                disabled={detailSaveBusy}
+                              >
+                                Cancel edit
+                              </button>
+                            </div>
+                          </form>
                         ) : null}
-                        <div className="admin-modal-actions">
-                          <button
-                            type="submit"
-                            className="primary-btn slim"
-                            disabled={detailSaveBusy}
-                          >
-                            {detailSaveBusy ? "Saving…" : "Save changes"}
-                          </button>
-                          <button
-                            type="button"
-                            className="ghost-btn"
-                            onClick={cancelEditInDetails}
-                            disabled={detailSaveBusy}
-                          >
-                            Cancel edit
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-                  </div>
-                </div>,
-                document.body,
-              ) : null}
+                      </div>
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
           </section>
         ) : null}
@@ -2523,7 +2717,9 @@ function AdminContent({
                     <button
                       type="button"
                       className="ghost-btn slim"
-                      disabled={pendingUsersPageClamped >= pendingUsersTotalPages}
+                      disabled={
+                        pendingUsersPageClamped >= pendingUsersTotalPages
+                      }
                       onClick={() =>
                         setPendingUsersListPage((p) =>
                           Math.min(pendingUsersTotalPages, p + 1),
@@ -2591,7 +2787,9 @@ function AdminContent({
                 />
                 <select
                   value={credentialsRoleFilter}
-                  onChange={(event) => setCredentialsRoleFilter(event.target.value)}
+                  onChange={(event) =>
+                    setCredentialsRoleFilter(event.target.value)
+                  }
                   className="search-input"
                   aria-label="Filter credentials by role"
                 >
@@ -2618,7 +2816,9 @@ function AdminContent({
                   onClick={() => void handleExportCsv("credentials")}
                   disabled={exportingView === "credentials"}
                 >
-                  {exportingView === "credentials" ? "Exporting..." : "Export CSV"}
+                  {exportingView === "credentials"
+                    ? "Exporting..."
+                    : "Export CSV"}
                 </button>
               </section>
               <div className="table-wrap">
@@ -2669,7 +2869,9 @@ function AdminContent({
                               <button
                                 type="button"
                                 className="text-btn action-btn danger-text"
-                                onClick={() => void handleDeleteCredential(row.email)}
+                                onClick={() =>
+                                  void handleDeleteCredential(row.email)
+                                }
                                 disabled={passwordBusy}
                               >
                                 Delete
@@ -2740,7 +2942,10 @@ function AdminContent({
                   aria-label="Filter shifts by role"
                 >
                   {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
-                    <option key={`shifts-${opt.value || "all"}`} value={opt.value}>
+                    <option
+                      key={`shifts-${opt.value || "all"}`}
+                      value={opt.value}
+                    >
                       {opt.value === "" ? "All roles" : opt.label}
                     </option>
                   ))}
@@ -2805,7 +3010,9 @@ function AdminContent({
                                   ? "badge red"
                                   : row.status.toLowerCase().includes("checked")
                                     ? "badge indigo"
-                                    : row.status.toLowerCase().includes("on time")
+                                    : row.status
+                                          .toLowerCase()
+                                          .includes("on time")
                                       ? "badge green"
                                       : "badge amber"
                               }
@@ -2831,7 +3038,9 @@ function AdminContent({
                       type="button"
                       className="ghost-btn slim"
                       disabled={shiftsPageClamped <= 1}
-                      onClick={() => setShiftsListPage((p) => Math.max(1, p - 1))}
+                      onClick={() =>
+                        setShiftsListPage((p) => Math.max(1, p - 1))
+                      }
                     >
                       Previous
                     </button>
@@ -2840,7 +3049,9 @@ function AdminContent({
                       className="ghost-btn slim"
                       disabled={shiftsPageClamped >= shiftsTotalPages}
                       onClick={() =>
-                        setShiftsListPage((p) => Math.min(shiftsTotalPages, p + 1))
+                        setShiftsListPage((p) =>
+                          Math.min(shiftsTotalPages, p + 1),
+                        )
                       }
                     >
                       Next
@@ -2873,7 +3084,10 @@ function AdminContent({
                   aria-label="Filter monthly attendance by role"
                 >
                   {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
-                    <option key={`monthly-${opt.value || "all"}`} value={opt.value}>
+                    <option
+                      key={`monthly-${opt.value || "all"}`}
+                      value={opt.value}
+                    >
                       {opt.value === "" ? "All roles" : opt.label}
                     </option>
                   ))}
@@ -2907,7 +3121,9 @@ function AdminContent({
                   onClick={() => void handleExportCsv("attendance")}
                   disabled={exportingView === "attendance"}
                 >
-                  {exportingView === "attendance" ? "Exporting..." : "Export CSV"}
+                  {exportingView === "attendance"
+                    ? "Exporting..."
+                    : "Export CSV"}
                 </button>
               </section>
 
@@ -2949,10 +3165,14 @@ function AdminContent({
                           <td>{row.lateDays}</td>
                           <td>{row.latePenaltyAbsents}</td>
                           <td>
-                            <span className="badge green">{row.effectivePresent}</span>
+                            <span className="badge green">
+                              {row.effectivePresent}
+                            </span>
                           </td>
                           <td>
-                            <span className="badge amber">{row.effectiveAbsent}</span>
+                            <span className="badge amber">
+                              {row.effectiveAbsent}
+                            </span>
                           </td>
                         </tr>
                       ))
@@ -3050,7 +3270,9 @@ function AdminContent({
               ) : null}
               <button
                 type="button"
-                className={confirmModal.danger ? "ghost-btn danger" : "primary-btn slim"}
+                className={
+                  confirmModal.danger ? "ghost-btn danger" : "primary-btn slim"
+                }
                 onClick={() => closeConfirmModal(true)}
               >
                 {confirmModal.confirmLabel}

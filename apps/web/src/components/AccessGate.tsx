@@ -16,10 +16,6 @@ interface AccessGateProps {
   children: (context: GateContext) => ReactNode;
 }
 
-const bypassGate =
-  String(import.meta.env.VITE_BYPASS_ACCESS_GATE || "").toLowerCase() ===
-  "true";
-
 function getDistanceMeters(
   lat1: number,
   lng1: number,
@@ -53,19 +49,6 @@ export function AccessGate({ children }: AccessGateProps) {
     let cancelled = false;
 
     async function run() {
-      if (bypassGate) {
-        if (!cancelled) {
-          setContext({
-            clientIp: "127.0.0.1",
-            latitude: null,
-            longitude: null,
-            policy: null,
-          });
-          setState("allowed");
-        }
-        return;
-      }
-
       try {
         const policy = await fetchAccessPolicy();
         const clientIp = await fetchPublicIp();

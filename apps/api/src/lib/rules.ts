@@ -1,23 +1,5 @@
 import { env } from "../config/env.js";
 
-const lateCutoffs: Record<string, number> = {
-  employee: 915,
-  faculty: 915,
-  "faculty member": 915,
-  "visiting faculty": 915,
-  "human resource": 915,
-  internee: 945,
-};
-
-const restrictedCheckoutRoles = new Set([
-  "internee",
-  "employee",
-  "faculty",
-  "faculty member",
-  "visiting faculty",
-  "human resource",
-]);
-
 export function normalizeValue(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
@@ -60,6 +42,21 @@ export function formatDisplayDateTime(
   };
 }
 
+/** Converts 24h wall clock "HH:mm" or "H:mm" to e.g. "9:05 AM". */
+export function formatWallHm12h(hm: string): string {
+  const trimmed = String(hm ?? "").trim();
+  if (!trimmed || trimmed === "N/A") return hm;
+  const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (!match) return hm;
+  let hour = Number(match[1]);
+  const minute = match[2];
+  const minuteNum = Number(minute);
+  if (hour > 23 || minuteNum > 59) return hm;
+  const period = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour % 12 || 12;
+  return `${hour12}:${minute} ${period}`;
+}
+
 export function timeValue(date: Date, timeZone = env.appTimezone): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -92,22 +89,6 @@ export function calculateDistanceMeters(
       Math.sin(deltaLng / 2) *
       Math.sin(deltaLng / 2);
   return 2 * earthRadius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-export function getLateStatus(
-  role: string,
-  attendanceType: string,
-  timestamp: Date,
-): "Late" | "On Time" {
-  if (attendanceType !== "Time In") return "On Time";
-  const cutoff = lateCutoffs[normalizeKey(role)];
-  if (!cutoff) return "On Time";
-  return timeValue(timestamp) > cutoff ? "Late" : "On Time";
-}
-
-export function canTimeOut(role: string, timestamp: Date): boolean {
-  if (!restrictedCheckoutRoles.has(normalizeKey(role))) return true;
-  return timeValue(timestamp) >= 1430;
 }
 
 export function shouldEnforceAccessGate(): boolean {

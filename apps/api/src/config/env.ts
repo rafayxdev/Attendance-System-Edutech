@@ -35,7 +35,10 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-me",
   appTimezone: process.env.APP_TIMEZONE ?? "Asia/Karachi",
   accessProfile: process.env.ACCESS_PROFILE ?? "home",
-  accessGateEnforced: toBool(process.env.ACCESS_GATE_ENFORCED, false),
+  accessGateEnforced: toBool(
+    process.env.ACCESS_GATE_ENFORCED,
+    (process.env.NODE_ENV ?? "development") === "production",
+  ),
   allowedIpPrefixes: splitList(
     process.env.ALLOWED_IP_PREFIXES,
     (process.env.ACCESS_PROFILE ?? "home") === "university"
@@ -48,8 +51,6 @@ export const env = {
   allowDemoSeed: toBool(process.env.ALLOW_DEMO_SEED, true),
   demoAdminEmail: process.env.DEMO_ADMIN_EMAIL ?? "admin@edutech.com",
   demoAdminPassword: process.env.DEMO_ADMIN_PASSWORD ?? "Admin@12345",
-  demoUserEmail: process.env.DEMO_USER_EMAIL ?? "staff@edutech.com",
-  demoUserPassword: process.env.DEMO_USER_PASSWORD ?? "Staff@12345",
   gmailUser: (process.env.GMAIL_USER ?? "").trim(),
   gmailAppPassword: (process.env.GMAIL_APP_PASSWORD ?? "").trim(),
   emailFrom:

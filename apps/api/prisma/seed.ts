@@ -9,7 +9,6 @@ async function main() {
   }
 
   const adminPassword = await bcrypt.hash(env.demoAdminPassword, 10);
-  const userPassword = await bcrypt.hash(env.demoUserPassword, 10);
 
   await prisma.user.upsert({
     where: { email: env.demoAdminEmail.toLowerCase() },
@@ -26,25 +25,6 @@ async function main() {
       role: "admin",
       fullName: "EduTech Admin",
       uniqueId: "ADMIN-001",
-      isActive: true,
-    },
-  });
-
-  await prisma.user.upsert({
-    where: { email: env.demoUserEmail.toLowerCase() },
-    update: {
-      passwordHash: userPassword,
-      role: "employee",
-      fullName: "EduTech Staff",
-      uniqueId: "EMP-001",
-      isActive: true,
-    },
-    create: {
-      email: env.demoUserEmail.toLowerCase(),
-      passwordHash: userPassword,
-      role: "employee",
-      fullName: "EduTech Staff",
-      uniqueId: "EMP-001",
       isActive: true,
     },
   });

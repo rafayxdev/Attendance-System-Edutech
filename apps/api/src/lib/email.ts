@@ -105,16 +105,16 @@ export async function sendAttendanceEmail(
     });
 
     return {
-      provider: "nodemailer",
+      provider: "gmail",
       messageId: info.messageId ?? null,
       skipped: false,
     };
   }
 
   return {
-    provider: "nodemailer",
+    provider: "console",
     skipped: true,
     reason:
-      "SMTP credentials not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env",
+      "Gmail credentials not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD in .env",
   };
 }

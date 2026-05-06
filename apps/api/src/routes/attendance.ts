@@ -6,7 +6,7 @@ import {
   allowedPrefixMatch,
   calculateDistanceMeters,
   formatDayKey,
-  getLateStatus,
+  formatWallHm12h,
   imageBufferFromDataUrl,
   shouldEnforceAccessGate,
 } from "../lib/rules.js";
@@ -84,7 +84,9 @@ function getWeekdayKey(date: Date, timeZone: string): string {
   return "sun";
 }
 
-function parseMonthFromDayKey(dayKey: string): { year: number; month: number; label: string } | null {
+function parseMonthFromDayKey(
+  dayKey: string,
+): { year: number; month: number; label: string } | null {
   const match = String(dayKey).match(/^(\d{4})-(\d{2})-\d{2}$/);
   if (!match) return null;
   const year = Number(match[1]);
@@ -124,9 +126,15 @@ function countTotalWeekdaysInMonth(params: {
   scheduleDays: Set<ScheduleDay>;
 }): number {
   const start = new Date(Date.UTC(params.year, params.month - 1, 1, 0, 0, 0));
-  const endExclusive = new Date(Date.UTC(params.year, params.month, 1, 0, 0, 0));
+  const endExclusive = new Date(
+    Date.UTC(params.year, params.month, 1, 0, 0, 0),
+  );
   let total = 0;
-  for (let d = new Date(start); d < endExclusive; d = new Date(d.getTime() + 86400000)) {
+  for (
+    let d = new Date(start);
+    d < endExclusive;
+    d = new Date(d.getTime() + 86400000)
+  ) {
     const weekday = getWeekdayKey(d, params.timeZone);
     if (
       weekday === "mon" ||
@@ -143,7 +151,13 @@ function countTotalWeekdaysInMonth(params: {
 
 async function upsertMonthlySummary(params: {
   monthLabel: string;
-  user: { id: string; email: string; fullName: string; role: string; uniqueId: string | null };
+  user: {
+    id: string;
+    email: string;
+    fullName: string;
+    role: string;
+    uniqueId: string | null;
+  };
   totalWeekdays: number;
   incrementPresent: number;
   incrementLate: number;
@@ -186,13 +200,11 @@ function hhmmFromDate(date: Date, timeZone: string): string {
   return `${hour}:${minute}`;
 }
 
-function evaluateScheduleWindow(
-  params: {
-    schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
-    type: "Time In" | "Time Out";
-    now: Date;
-  },
-): { allowed: boolean; status: "On Time" | "Late"; message: string | null } {
+function evaluateScheduleWindow(params: {
+  schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
+  type: "Time In" | "Time Out";
+  now: Date;
+}): { allowed: boolean; status: "On Time" | "Late"; message: string | null } {
   const weekday = getWeekdayKey(params.now, env.appTimezone);
   if (!["mon", "tue", "wed", "thu", "fri"].includes(weekday)) {
     return {
@@ -216,20 +228,23 @@ function evaluateScheduleWindow(
   const endMinutes = toMinutes(todaySlot.endTime);
 
   if (params.type === "Time In") {
-    if (nowMinutes < startMinutes) {
+    // Can mark Time In from 1 hour before start time till end time
+    const earliestMinutes = Math.max(0, startMinutes - 60);
+    if (nowMinutes < earliestMinutes) {
       return {
         allowed: false,
         status: "On Time",
-        message: `Time In starts at ${todaySlot.startTime}.`,
+        message: `Time In starts at ${formatWallHm12h(todaySlot.startTime)}.`,
       };
     }
     if (nowMinutes > endMinutes) {
       return {
         allowed: false,
         status: "Late",
-        message: `Time In closed at ${todaySlot.endTime}.`,
+        message: `Time In closed at ${formatWallHm12h(todaySlot.endTime)}.`,
       };
     }
+    // Mark as Late if current time is after start time + 15 minutes
     return {
       allowed: true,
       status: nowMinutes > startMinutes + 15 ? "Late" : "On Time",
@@ -241,25 +256,23 @@ function evaluateScheduleWindow(
     return {
       allowed: false,
       status: "On Time",
-      message: `Time Out is after ${todaySlot.endTime}.`,
+      message: `Time Out is after ${formatWallHm12h(todaySlot.endTime)}.`,
     };
   }
   if (nowMinutes > endMinutes + 60) {
     return {
       allowed: false,
       status: "On Time",
-      message: `Time Out closed 1 hour after ${todaySlot.endTime}.`,
+      message: `Time Out closed 1 hour after ${formatWallHm12h(todaySlot.endTime)}.`,
     };
   }
   return { allowed: true, status: "On Time", message: null };
 }
 
-function evaluateDaySchedule(
-  params: {
-    schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
-    now: Date;
-  },
-): {
+function evaluateDaySchedule(params: {
+  schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
+  now: Date;
+}): {
   dayOk: boolean;
   todaySlot: { day: ScheduleDay; startTime: string; endTime: string } | null;
   nowMinutes: number;
@@ -486,8 +499,7 @@ attendanceRouter.post(
       }
     }
 
-    const status =
-      scheduleStatus ?? getLateStatus(user.role, parsed.data.type, now);
+    const status = scheduleStatus;
     const record = await storeAttendance({
       userId: user.id,
       category: user.role,
@@ -695,7 +707,11 @@ attendanceRouter.get(
     const end = evalDay.endMinutes ?? start;
     const nowMin = evalDay.nowMinutes;
 
-    const timeInWindow = evaluateScheduleWindow({ schedule, type: "Time In", now });
+    const timeInWindow = evaluateScheduleWindow({
+      schedule,
+      type: "Time In",
+      now,
+    });
     const timeOutWindow = evaluateScheduleWindow({
       schedule,
       type: "Time Out",
@@ -748,8 +764,10 @@ attendanceRouter.get(
     }
 
     const effectiveType = selectedType ?? recommendedType;
-    const effectiveAllowed = effectiveType === "Time In" ? timeInAllowed : timeOutAllowed;
-    const effectiveMessage = effectiveType === "Time In" ? timeInMessage : timeOutMessage;
+    const effectiveAllowed =
+      effectiveType === "Time In" ? timeInAllowed : timeOutAllowed;
+    const effectiveMessage =
+      effectiveType === "Time In" ? timeInMessage : timeOutMessage;
 
     response.json({
       recommendedType,

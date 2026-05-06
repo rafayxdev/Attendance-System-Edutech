@@ -41,6 +41,59 @@ body {
   color: var(--text);
 }
 
+body.admin-portal {
+  overflow: hidden;
+  scrollbar-color: transparent transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+body.admin-portal::-webkit-scrollbar,
+body.admin-portal .admin-shell::-webkit-scrollbar,
+body.admin-portal .admin-workspace::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+body.admin-portal .table-wrap,
+body.admin-portal .admin-modal-card {
+  scrollbar-color: rgba(56, 189, 248, 0.82) rgba(15, 23, 42, 0.78);
+  scrollbar-width: thin;
+}
+
+body.admin-portal .table-wrap::-webkit-scrollbar,
+body.admin-portal .admin-modal-card::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+body.admin-portal .table-wrap::-webkit-scrollbar-track,
+body.admin-portal .admin-modal-card::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.74);
+  border-radius: 999px;
+}
+
+body.admin-portal .table-wrap::-webkit-scrollbar-thumb,
+body.admin-portal .admin-modal-card::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(96, 165, 250, 0.95),
+    rgba(56, 189, 248, 0.85)
+  );
+  border: 3px solid rgba(15, 23, 42, 0.74);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+body.admin-portal .table-wrap::-webkit-scrollbar-thumb:hover,
+body.admin-portal .admin-modal-card::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(125, 211, 252, 1),
+    rgba(59, 130, 246, 0.95)
+  );
+}
+
 button,
 input {
   font: inherit;
@@ -63,6 +116,18 @@ button {
 .admin-shell {
   place-items: stretch;
   padding: 0;
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.82) rgba(15, 23, 42, 0.78);
+}
+
+.admin-shell::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .bg-blob,
@@ -150,6 +215,8 @@ button {
       transparent 40%
     );
   box-shadow: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.82) rgba(15, 23, 42, 0.78);
 }
 
 .user-attendance-card {
@@ -316,11 +383,13 @@ button {
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.45);
   width: 100%;
-  justify-content: space-between;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
 }
 
 .login-role-tabs .role-tab {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   justify-content: center;
   gap: 0;
@@ -330,10 +399,15 @@ button {
   background: transparent;
   color: rgba(226, 232, 240, 0.55);
   transform: none;
+  white-space: nowrap;
 }
 
 .login-role-tabs .role-tab.active {
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.26), rgba(99, 102, 241, 0.22));
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.26),
+    rgba(99, 102, 241, 0.22)
+  );
   border-color: rgba(56, 189, 248, 0.35);
   color: rgba(226, 232, 240, 0.92);
 }
@@ -731,6 +805,27 @@ select optgroup {
   color: #eef6ff;
 }
 
+.admin-schedule-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.schedule-disabled-note {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px dashed rgba(96, 165, 250, 0.45);
+  background: rgba(59, 130, 246, 0.08);
+  color: #bfdbfe;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .active-schedule-mode {
   border-color: rgba(56, 189, 248, 0.48);
   background: rgba(56, 189, 248, 0.14);
@@ -823,13 +918,9 @@ select optgroup {
     rgba(15, 23, 42, 0.94)
   );
   box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 189, 248, 0.82) rgba(15, 23, 42, 0.78);
   -ms-overflow-style: none;
-}
-
-.admin-modal-card::-webkit-scrollbar {
-  width: 0;
-  height: 0;
 }
 
 .admin-modal-head {
@@ -1308,11 +1399,17 @@ select optgroup {
   border-radius: 12px;
 }
 
-.profile-grid,
-.stats-grid {
+.profile-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.stats-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   margin-bottom: 16px;
 }
 
@@ -1834,10 +1931,47 @@ td code {
 }
 
 @media (max-width: 640px) {
+  body.admin-portal {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .auth-shell,
+  .page-shell {
+    padding: 12px;
+  }
+
+  .admin-shell {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: auto;
+  }
+
   .auth-card,
   .workspace-card {
-    padding: 18px;
-    border-radius: 22px;
+    width: 100%;
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .brand-block {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .brand-logo,
+  .login-brand-logo,
+  .admin-brand img,
+  .attendance-brand img {
+    width: 72px;
+    height: 72px;
+  }
+
+  .login-title,
+  .topbar h1 {
+    font-size: 20px;
   }
 
   .profile-grid,
@@ -1848,25 +1982,131 @@ td code {
   .topbar {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
   }
 
   .topbar-actions {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .admin-workspace {
     padding: 16px;
   }
 
+  .admin-topbar,
+  .attendance-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .admin-actions,
+  .attendance-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: stretch;
+  }
+
+  .attendance-live-clock {
+    width: 100%;
+    text-align: left;
+  }
+
+  .attendance-live-clock-value {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .attendance-brand {
+    width: 100%;
+  }
+
+  .attendance-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
   .topbar-actions > * {
-    flex: 1;
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .admin-nav-tabs {
+    gap: 8px;
+  }
+
+  .admin-nav-tabs .role-tab,
+  .login-role-tabs .role-tab {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+    font-size: 12px;
+    padding: 10px 12px;
   }
 
   .users-add-form {
     grid-template-columns: 1fr;
   }
 
+  .monthly-inline-filters {
+    flex-wrap: wrap;
+  }
+
+  .monthly-inline-filters > * {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .overview-filters-bar {
+    width: 100%;
+  }
+
+  .overview-search-compact,
+  .overview-role-select,
+  .overview-search-submit,
+  .overview-date-input-visible {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .overview-period-segmented {
+    width: 100%;
+  }
+
+  .overview-seg-btn {
+    flex: 1 1 calc(50% - 8px);
+  }
+
+  .compact-filters .search-input {
+    min-width: 0;
+  }
+
+  .type-row,
+  .camera-actions,
+  .users-pagination-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .type-row > *,
+  .camera-actions > *,
+  .users-pagination-actions > * {
+    width: 100%;
+  }
+
+  .image-capture-head,
+  .schedule-head,
+  .detail-schedule-row-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .schedule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .all-days-row {
     grid-template-columns: 1fr;
   }
 
@@ -1892,5 +2132,80 @@ td code {
     min-width: 100%;
     max-width: 100%;
     flex-basis: 100%;
+  }
+
+  .table-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  table.overview-logs-table,
+  table {
+    min-width: 760px;
+  }
+
+  .admin-modal-backdrop {
+    padding: 12px;
+  }
+
+  .admin-modal-card {
+    width: min(100%, 100vw);
+    max-height: calc(100dvh - 24px);
+    border-radius: 18px;
+  }
+
+  .admin-modal-head,
+  .admin-modal-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
+
+@media (max-width: 420px) {
+  .auth-card,
+  .workspace-card {
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .admin-nav-tabs .role-tab,
+  .overview-seg-btn {
+    flex-basis: 100%;
+  }
+
+  .login-title,
+  .topbar h1 {
+    font-size: 18px;
+  }
+
+  .login-subtitle,
+  .topbar p,
+  .attendance-live-clock-label {
+    font-size: 10px;
+  }
+
+  .primary-btn,
+  .ghost-btn,
+  .text-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .attendance-brand img,
+  .brand-logo,
+  .login-brand-logo,
+  .admin-brand img {
+    width: 64px;
+    height: 64px;
+  }
+
+  .image-dropzone,
+  .camera-preview {
+    min-height: 160px;
+  }
+
+  .metric-card {
+    padding: 14px;
   }
 }
