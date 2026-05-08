@@ -7,7 +7,7 @@ import { configRouter } from "./routes/config.js";
 
 function mapHandledDatabaseError(
   error: unknown,
-): { status: number; message: string } | null {
+): { status: number; message: string; consoleMessage?: string } | null {
   if (!error || typeof error !== "object") return null;
   const rec = error as Record<string, unknown>;
   const name = typeof rec.name === "string" ? rec.name : "";
@@ -21,7 +21,7 @@ function mapHandledDatabaseError(
         return {
           status: 503,
           message:
-            "Cannot reach the database. Check DATABASE_URL, that the host (e.g. Supabase) is running, and that your network or firewall allows outbound connections to the database port.",
+            "Cannot reach the database. Check your internet connection or database host connectivity.",
         };
       case "P1000":
         return {
@@ -56,6 +56,8 @@ function mapHandledDatabaseError(
     return {
       status: 503,
       message:
+        "Database could not be initialized. Check your database settings.",
+      consoleMessage:
         "Database could not be initialized. Check DATABASE_URL format and SSL settings; for Supabase, confirm you use the correct direct or pooled connection string for Prisma.",
     };
   }
@@ -97,12 +99,13 @@ export function createApp() {
       response: express.Response,
       _next: express.NextFunction,
     ) => {
-      console.error(error);
       const mapped = mapHandledDatabaseError(error);
       if (mapped) {
+        console.error(mapped.consoleMessage ?? mapped.message);
         response.status(mapped.status).json({ message: mapped.message });
         return;
       }
+      console.error(error);
       response.status(500).json({ message: "Internal server error" });
     },
   );

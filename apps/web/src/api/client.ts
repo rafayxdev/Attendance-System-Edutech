@@ -45,12 +45,16 @@ export async function apiRequest<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers,
-  });
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers,
+    });
 
-  return parseResponse<T>(response);
+    return parseResponse<T>(response);
+  } catch {
+    throw new Error("Check internet connection.");
+  }
 }
 
 export async function fetchAccessPolicy(): Promise<AccessPolicy> {

@@ -247,19 +247,48 @@ async function rebuildMonthlySummaryForUser(params: {
   const monthEndExclusive = formatDayKey(
     new Date(Date.UTC(month.year, month.month, 1, 0, 0, 0)),
   );
-  const timeIns = await prisma.attendanceLog.findMany({
+  const monthLogs = await prisma.attendanceLog.findMany({
     where: {
       userId: user.id,
-      attendanceType: "Time In",
+      attendanceType: { in: ["Time In", "Time Out"] },
       attendanceDay: {
         gte: monthStart,
         lt: monthEndExclusive,
       },
     },
-    select: { status: true },
+    select: { attendanceDay: true, attendanceType: true, status: true },
   });
-  const presentDays = timeIns.length;
-  const lateDays = timeIns.filter((entry) => entry.status === "Late").length;
+
+  const byDay = new Map<
+    string,
+    { hasTimeIn: boolean; hasTimeOut: boolean; timeInLate: boolean }
+  >();
+  for (const log of monthLogs) {
+    const row = byDay.get(log.attendanceDay) ?? {
+      hasTimeIn: false,
+      hasTimeOut: false,
+      timeInLate: false,
+    };
+
+    if (log.attendanceType === "Time In") {
+      row.hasTimeIn = true;
+      if (log.status === "Late") {
+        row.timeInLate = true;
+      }
+    }
+    if (log.attendanceType === "Time Out") {
+      row.hasTimeOut = true;
+    }
+
+    byDay.set(log.attendanceDay, row);
+  }
+
+  // Both Time In and Time Out must exist for a day to count as present
+  const summaryDays = Array.from(byDay.values()).filter(
+    (entry) => entry.hasTimeIn && entry.hasTimeOut,
+  );
+  const presentDays = summaryDays.length;
+  const lateDays = summaryDays.filter((entry) => entry.timeInLate).length;
   const table = monthlyTableName(monthLabel);
 
   if (presentDays <= 0) {

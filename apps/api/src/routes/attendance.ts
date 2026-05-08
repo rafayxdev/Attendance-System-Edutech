@@ -482,12 +482,17 @@ attendanceRouter.post(
       return;
     }
 
+    let sameDayTimeInStatus: string | null = null;
+
     if (parsed.data.type === "Time Out") {
       const hasTimeIn = await prisma.attendanceLog.findFirst({
         where: {
           userId: user.id,
           attendanceDay: dayKey,
           attendanceType: "Time In",
+        },
+        select: {
+          status: true,
         },
       });
 
@@ -497,6 +502,8 @@ attendanceRouter.post(
           .json({ message: "You must mark Time In before Time Out." });
         return;
       }
+
+      sameDayTimeInStatus = hasTimeIn.status;
     }
 
     const status = scheduleStatus;
@@ -513,8 +520,8 @@ attendanceRouter.post(
       imageDataUrl: parsed.data.imageDataUrl,
     });
 
-    // Monthly summary table update (one table per month), updated on Time In only.
-    if (parsed.data.type === "Time In") {
+    // Monthly summary table update (one table per month), updated on Time Out only.
+    if (parsed.data.type === "Time Out") {
       const month = parseMonthFromDayKey(dayKey);
       if (month) {
         const scheduleDays = new Set(schedule.map((s) => s.day));
@@ -536,7 +543,7 @@ attendanceRouter.post(
           },
           totalWeekdays,
           incrementPresent: 1,
-          incrementLate: status === "Late" ? 1 : 0,
+          incrementLate: sameDayTimeInStatus === "Late" ? 1 : 0,
         });
       }
     }
