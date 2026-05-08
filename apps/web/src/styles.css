@@ -26,18 +26,7 @@ body,
 
 body {
   font-family: "DM Sans", sans-serif;
-  background:
-    radial-gradient(
-      circle at top left,
-      rgba(99, 102, 241, 0.22),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at bottom right,
-      rgba(56, 189, 248, 0.18),
-      transparent 32%
-    ),
-    linear-gradient(160deg, #050a18, #091129 60%, #050a18);
+  background: var(--bg);
   color: var(--text);
 }
 
@@ -156,6 +145,10 @@ button {
   right: -60px;
   animation-delay: 2.5s;
 }
+/* hide the bottom decorative blob to remove the visible bottom gradient/band */
+.blob-b {
+  display: none !important;
+}
 
 .page-bg {
   inset: 0;
@@ -202,18 +195,7 @@ button {
   border-radius: 0;
   border: none;
   padding: 28px;
-  background:
-    linear-gradient(
-      145deg,
-      rgba(7, 15, 38, 0.9),
-      rgba(11, 24, 55, 0.84) 55%,
-      rgba(8, 19, 44, 0.9)
-    ),
-    radial-gradient(
-      circle at top right,
-      rgba(56, 189, 248, 0.16),
-      transparent 40%
-    );
+  background: var(--bg);
   box-shadow: none;
   scrollbar-width: thin;
   scrollbar-color: rgba(56, 189, 248, 0.82) rgba(15, 23, 42, 0.78);
@@ -992,7 +974,40 @@ select optgroup {
 }
 
 .confirm-modal-card {
-  width: min(100%, 560px);
+  width: min(100%, 620px);
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.99),
+    rgba(8, 15, 32, 0.98)
+  );
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  box-shadow: 0 28px 72px rgba(2, 6, 23, 0.68);
+  overflow: hidden;
+}
+
+.confirm-modal-card .admin-modal-head {
+  padding: 18px 22px;
+}
+
+.confirm-modal-card .admin-modal-head h3 {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.confirm-modal-body {
+  padding: 20px 22px 8px;
+}
+
+.confirm-modal-body p {
+  margin: 0;
+  color: #dbeafe;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.confirm-modal-card .admin-modal-actions {
+  margin-top: 0;
+  padding: 0 22px 22px;
 }
 
 .confirm-modal-body p {
@@ -1822,6 +1837,16 @@ td code {
   color: #c7d2fe;
 }
 
+.badge.purple {
+  background: rgba(168, 85, 247, 0.12);
+  color: #e9d5ff;
+}
+
+.badge.amber {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd34d;
+}
+
 .empty-row {
   text-align: center;
   color: var(--muted);
@@ -1995,16 +2020,7 @@ td code {
     overflow-y: visible;
     scrollbar-width: none;
     -ms-overflow-style: none;
-  }
-
-  .admin-workspace::-webkit-scrollbar {
-    width: 0;
-    height: 0;
-  }
-
-  .admin-brand {
-    width: 100%;
-    max-width: 100%;
+    background: var(--bg);
   }
 
   .admin-brand > div {

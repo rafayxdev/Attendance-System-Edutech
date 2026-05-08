@@ -184,6 +184,98 @@ function parseMonthFromDayKey(dayKey: string): { label: string } | null {
   return { label: `${match[1]}-${match[2]}` };
 }
 
+type AttendanceDayState = {
+  hasTimeIn: boolean;
+  hasTimeOut: boolean;
+  timeInLate: boolean;
+  manualStatus: "Present" | "Absent" | "Late" | null;
+};
+
+function summarizeAttendanceDayState(
+  logs: Array<{ attendanceType: string; status: string }>,
+): AttendanceDayState {
+  const state: AttendanceDayState = {
+    hasTimeIn: false,
+    hasTimeOut: false,
+    timeInLate: false,
+    manualStatus: null,
+  };
+
+  for (const log of logs) {
+    if (log.attendanceType === "Manual Attendance") {
+      state.manualStatus =
+        log.status === "Present" || log.status === "Late"
+          ? log.status
+          : "Absent";
+      continue;
+    }
+
+    if (log.attendanceType === "Time In") {
+      state.hasTimeIn = true;
+      if (log.status === "Late") {
+        state.timeInLate = true;
+      }
+    }
+
+    if (log.attendanceType === "Time Out") {
+      state.hasTimeOut = true;
+    }
+  }
+
+  return state;
+}
+
+function applyAttendanceLogToDayState(
+  state: AttendanceDayState,
+  log: { attendanceType: string; status: string },
+): AttendanceDayState {
+  if (log.attendanceType === "Manual Attendance") {
+    return {
+      hasTimeIn: false,
+      hasTimeOut: false,
+      timeInLate: false,
+      manualStatus:
+        log.status === "Present" || log.status === "Late"
+          ? log.status
+          : "Absent",
+    };
+  }
+
+  if (state.manualStatus) {
+    return state;
+  }
+
+  if (log.attendanceType === "Time In") {
+    return {
+      ...state,
+      hasTimeIn: true,
+      timeInLate: state.timeInLate || log.status === "Late",
+    };
+  }
+
+  if (log.attendanceType === "Time Out") {
+    return {
+      ...state,
+      hasTimeOut: true,
+    };
+  }
+
+  return state;
+}
+
+function dayCountsAsPresent(state: AttendanceDayState): boolean {
+  if (state.manualStatus === "Present") return true;
+  if (state.manualStatus === "Late") return true;
+  if (state.manualStatus === "Absent") return false;
+  return state.hasTimeIn && state.hasTimeOut;
+}
+
+function dayCountsAsLate(state: AttendanceDayState): boolean {
+  if (state.manualStatus === "Late") return true;
+  if (state.manualStatus) return false;
+  return state.hasTimeIn && state.hasTimeOut && state.timeInLate;
+}
+
 async function monthlyTableExists(monthLabel: string): Promise<boolean> {
   const table = monthlyTableName(monthLabel);
   const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
@@ -250,7 +342,7 @@ async function rebuildMonthlySummaryForUser(params: {
   const monthLogs = await prisma.attendanceLog.findMany({
     where: {
       userId: user.id,
-      attendanceType: { in: ["Time In", "Time Out"] },
+      attendanceType: { in: ["Time In", "Time Out", "Manual Attendance"] },
       attendanceDay: {
         gte: monthStart,
         lt: monthEndExclusive,
@@ -259,36 +351,26 @@ async function rebuildMonthlySummaryForUser(params: {
     select: { attendanceDay: true, attendanceType: true, status: true },
   });
 
-  const byDay = new Map<
-    string,
-    { hasTimeIn: boolean; hasTimeOut: boolean; timeInLate: boolean }
-  >();
+  const byDay = new Map<string, AttendanceDayState>();
   for (const log of monthLogs) {
-    const row = byDay.get(log.attendanceDay) ?? {
+    const existing = byDay.get(log.attendanceDay) ?? {
       hasTimeIn: false,
       hasTimeOut: false,
       timeInLate: false,
+      manualStatus: null,
     };
-
-    if (log.attendanceType === "Time In") {
-      row.hasTimeIn = true;
-      if (log.status === "Late") {
-        row.timeInLate = true;
-      }
-    }
-    if (log.attendanceType === "Time Out") {
-      row.hasTimeOut = true;
-    }
-
-    byDay.set(log.attendanceDay, row);
+    byDay.set(
+      log.attendanceDay,
+      applyAttendanceLogToDayState(existing, {
+        attendanceType: log.attendanceType,
+        status: log.status,
+      }),
+    );
   }
 
-  // Both Time In and Time Out must exist for a day to count as present
-  const summaryDays = Array.from(byDay.values()).filter(
-    (entry) => entry.hasTimeIn && entry.hasTimeOut,
-  );
+  const summaryDays = Array.from(byDay.values()).filter(dayCountsAsPresent);
   const presentDays = summaryDays.length;
-  const lateDays = summaryDays.filter((entry) => entry.timeInLate).length;
+  const lateDays = summaryDays.filter(dayCountsAsLate).length;
   const table = monthlyTableName(monthLabel);
 
   if (presentDays <= 0) {
@@ -1037,6 +1119,179 @@ adminRouter.delete(
   },
 );
 
+const manualAttendanceSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.enum(["Present", "Absent", "Late"]),
+  reason: z.string().min(1),
+});
+
+adminRouter.get(
+  "/manual-attendance",
+  async (request: AuthenticatedRequest, response) => {
+    const date = String(request.query.date ?? "").trim();
+    const role = String(request.query.role ?? "").trim();
+    const search = String(request.query.search ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      response.status(400).json({ message: "Invalid date." });
+      return;
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        NOT: { role: { equals: "guest", mode: "insensitive" } },
+        ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
+        ...(search
+          ? {
+              OR: [
+                { email: { contains: search, mode: "insensitive" } },
+                { fullName: { contains: search, mode: "insensitive" } },
+                { role: { contains: search, mode: "insensitive" } },
+                { uniqueId: { contains: search, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 1000,
+    });
+
+    const logs = await prisma.attendanceLog.findMany({
+      where: {
+        attendanceDay: date,
+        userId: { not: null },
+      },
+      select: {
+        id: true,
+        userId: true,
+        attendanceType: true,
+        status: true,
+        purpose: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const logsByUser = new Map<
+      string,
+      Array<{
+        id: string;
+        attendanceType: string;
+        status: string;
+        purpose: string | null;
+      }>
+    >();
+    for (const log of logs) {
+      if (!log.userId) continue;
+      const existing = logsByUser.get(log.userId) ?? [];
+      existing.push({
+        id: log.id,
+        attendanceType: log.attendanceType,
+        status: log.status,
+        purpose: log.purpose ?? null,
+      });
+      logsByUser.set(log.userId, existing);
+    }
+
+    response.json(
+      users.map((user) => {
+        const userLogs = logsByUser.get(user.id) ?? [];
+        const state = summarizeAttendanceDayState(
+          userLogs.map((log) => ({
+            attendanceType: log.attendanceType,
+            status: log.status,
+          })),
+        );
+        const manualLog = userLogs.find(
+          (log) => log.attendanceType === "Manual Attendance",
+        );
+
+        return {
+          userId: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          uniqueId: user.uniqueId ?? "N/A",
+          attendance:
+            state.manualStatus ??
+            (dayCountsAsPresent(state) ? "Present" : "Absent"),
+          reason: manualLog?.purpose ?? "",
+          attendanceLogId: manualLog?.id ?? null,
+          markedByAdmin: state.manualStatus !== null,
+        };
+      }),
+    );
+  },
+);
+
+adminRouter.put(
+  "/manual-attendance/:userId",
+  async (request: AuthenticatedRequest, response) => {
+    const parsed = manualAttendanceSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response
+        .status(400)
+        .json({ message: "Invalid manual attendance payload." });
+      return;
+    }
+
+    const userId = String(request.params.userId ?? "").trim();
+    if (!userId) {
+      response.status(400).json({ message: "Invalid user id." });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const existingDayLogs = await prisma.attendanceLog.findMany({
+      where: { userId, attendanceDay: parsed.data.date },
+      select: { id: true },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      if (existingDayLogs.length > 0) {
+        const ids = existingDayLogs.map((log) => log.id);
+        await tx.emailLog.deleteMany({ where: { attendanceId: { in: ids } } });
+        await tx.attendanceLog.deleteMany({ where: { id: { in: ids } } });
+      }
+
+      await tx.attendanceLog.create({
+        data: {
+          userId: user.id,
+          category: user.role,
+          purpose: parsed.data.reason.trim(),
+          attendanceType: "Manual Attendance",
+          locationText: "Manual Attendance",
+          status: parsed.data.status,
+          ipAddress: request.auth?.email ?? "manual-admin",
+          attendanceDay: parsed.data.date,
+        },
+      });
+    });
+
+    const month = parseMonthFromDayKey(parsed.data.date);
+    if (month) {
+      await rebuildMonthlySummaryForUser({
+        monthLabel: month.label,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          uniqueId: user.uniqueId ?? null,
+        },
+      });
+    }
+
+    response.json({ success: true });
+  },
+);
+
 adminRouter.get(
   "/users-credentials",
   async (request: AuthenticatedRequest, response) => {
@@ -1522,6 +1777,12 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
   const today = formatDayKey(new Date());
   const logs = await prisma.attendanceLog.findMany({
     where: { attendanceDay: today },
+    select: {
+      userId: true,
+      category: true,
+      attendanceType: true,
+      status: true,
+    },
   });
 
   const totalExpectedPresent = await prisma.user.count({
@@ -1533,7 +1794,10 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
     },
   });
 
-  const presentUsers = new Set<string>();
+  const byUser = new Map<
+    string,
+    { isGuest: boolean; state: AttendanceDayState }
+  >();
   let late = 0;
   let guestsToday = 0;
   let checkedOutUsers = 0;
@@ -1547,29 +1811,48 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
   for (const log of logs) {
     const isGuest = isGuestCategory(log.category);
 
-    if (log.attendanceType === "Time In") {
-      if (!isGuest && log.userId) {
-        presentUsers.add(log.userId);
-      }
-
-      if (isGuest) {
-        guestsToday += 1;
-      } else if (log.status === "Late") {
-        late += 1;
-      }
+    if (isGuest) {
+      if (log.attendanceType === "Time In") guestsToday += 1;
+      if (log.attendanceType === "Time Out") checkedOutGuests += 1;
+      continue;
     }
 
+    if (!log.userId) continue;
+
+    const current = byUser.get(log.userId) ?? {
+      isGuest,
+      state: {
+        hasTimeIn: false,
+        hasTimeOut: false,
+        timeInLate: false,
+        manualStatus: null,
+      },
+    };
+
+    const state = applyAttendanceLogToDayState(current.state, {
+      attendanceType: log.attendanceType,
+      status: log.status,
+    });
+
+    byUser.set(log.userId, { ...current, state });
+
     if (log.attendanceType === "Time Out") {
-      if (isGuest) {
-        checkedOutGuests += 1;
-      } else {
-        checkedOutUsers += 1;
-      }
+      checkedOutUsers += 1;
+    }
+  }
+
+  for (const entry of byUser.values()) {
+    if (!entry.isGuest) {
+      late += dayCountsAsLate(entry.state) ? 1 : 0;
     }
   }
 
   response.json({
-    present: presentUsers.size,
+    present: Array.from(byUser.values()).filter(
+      (entry) =>
+        !entry.isGuest &&
+        (entry.state.hasTimeIn || entry.state.manualStatus === "Present"),
+    ).length,
     presentExpected: totalExpectedPresent,
     late,
     outside: guestsToday,

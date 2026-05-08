@@ -28,7 +28,7 @@ export interface AttendanceLogRow {
   fullName: string;
   category: string;
   purpose: string;
-  type: "Time In" | "Time Out";
+  type: string;
   location: string;
   email: string;
   status: string;

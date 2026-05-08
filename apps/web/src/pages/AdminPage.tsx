@@ -19,7 +19,8 @@ type AdminView =
   | "generator"
   | "credentials"
   | "shifts"
-  | "attendance";
+  | "attendance"
+  | "manual-attendance";
 type WeekdayKey = "mon" | "tue" | "wed" | "thu" | "fri";
 type WeekdaySchedule = {
   day: WeekdayKey;
@@ -42,6 +43,11 @@ const OVERVIEW_ROLE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "", label: "All roles" },
   ...USER_ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
   { value: "Guest", label: "Guest" },
+];
+
+const MANUAL_ROLE_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "", label: "All roles" },
+  ...USER_ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
 ];
 
 function formatOverviewPeriodSummary(
@@ -246,6 +252,50 @@ type MonthlyAttendanceRow = {
   effectiveAbsent: number;
 };
 
+type ManualAttendanceRow = {
+  userId: string;
+  email: string;
+  fullName: string;
+  role: string;
+  uniqueId: string;
+  attendance: "Present" | "Absent" | "Late";
+  reason: string;
+  attendanceLogId: string | null;
+  markedByAdmin: boolean;
+};
+
+type ManualAttendanceEditState = {
+  userId: string;
+  fullName: string;
+  email: string;
+  role: string;
+  uniqueId: string;
+  date: string;
+  attendance: "Present" | "Absent" | "Late";
+  reason: string;
+};
+
+function todayInputValue(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getAttendanceTypeBadgeClass(type: string): string {
+  if (type === "Time In") return "badge green";
+  if (type === "Time Out") return "badge indigo";
+  if (type === "Manual Attendance") return "badge purple";
+  return "badge amber";
+}
+
+function getAttendanceStatusBadgeClass(status: string): string {
+  if (status === "Late" || status === "Absent") return "badge red";
+  if (status === "Present" || status === "On Time") return "badge green";
+  return "badge green";
+}
+
 export function AdminPage({ onSessionChange }: AdminPageProps) {
   const session = readSession();
 
@@ -394,6 +444,42 @@ function AdminContent({
   const [monthlyListPage, setMonthlyListPage] = useState(1);
   const [pendingUsersListPage, setPendingUsersListPage] = useState(1);
 
+  const [manualDate, setManualDate] = useState(() => todayInputValue());
+  const [manualRoleFilter, setManualRoleFilter] = useState("");
+  const [manualSearch, setManualSearch] = useState("");
+  const [manualData, setManualData] = useState<ManualAttendanceRow[]>([]);
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualListPage, setManualListPage] = useState(1);
+  const [manualEditForm, setManualEditForm] =
+    useState<ManualAttendanceEditState | null>(null);
+  const [manualSaveBusy, setManualSaveBusy] = useState(false);
+  const [manualMessage, setManualMessage] = useState("");
+  const [manualMessageIsError, setManualMessageIsError] = useState(false);
+
+  // Auto-dismiss transient admin messages after a short delay
+  useEffect(() => {
+    const timers: Array<number> = [];
+    const clearAfter = (setter: (v: string) => void, value: string) => {
+      if (!value) return;
+      const id = window.setTimeout(() => setter(""), 4200);
+      timers.push(id);
+    };
+
+    clearAfter(setManualMessage, manualMessage);
+    clearAfter(setGenerateMessage, generateMessage);
+    clearAfter(setAddUserMessage, addUserMessage);
+    clearAfter(setDetailModalMessage, detailModalMessage);
+    clearAfter(setPasswordMessage, passwordMessage);
+
+    return () => timers.forEach((t) => clearTimeout(t));
+  }, [
+    manualMessage,
+    generateMessage,
+    addUserMessage,
+    detailModalMessage,
+    passwordMessage,
+  ]);
+
   async function loadShifts() {
     setShiftsBusy(true);
     try {
@@ -443,6 +529,87 @@ function AdminContent({
       }
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  async function loadManualAttendance() {
+    setManualBusy(true);
+    try {
+      const query = new URLSearchParams();
+      query.set("date", manualDate);
+      if (manualRoleFilter.trim()) query.set("role", manualRoleFilter.trim());
+      if (manualSearch.trim()) query.set("search", manualSearch.trim());
+      const rows = await apiRequest<ManualAttendanceRow[]>(
+        `/admin/manual-attendance?${query.toString()}`,
+      );
+      setManualData(rows);
+      setManualListPage(1);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setManualBusy(false);
+    }
+  }
+
+  function openManualEdit(row: ManualAttendanceRow) {
+    setManualMessage("");
+    setManualMessageIsError(false);
+    setManualEditForm({
+      userId: row.userId,
+      fullName: row.fullName,
+      email: row.email,
+      role: row.role,
+      uniqueId: row.uniqueId,
+      date: manualDate,
+      attendance: row.attendance,
+      reason: row.reason,
+    });
+  }
+
+  function closeManualEdit() {
+    setManualEditForm(null);
+    setManualSaveBusy(false);
+  }
+
+  async function handleManualSave(event: React.FormEvent) {
+    event.preventDefault();
+    if (!manualEditForm) return;
+
+    setManualSaveBusy(true);
+    setManualMessage("");
+    setManualMessageIsError(false);
+    try {
+      await apiRequest<{ success: boolean }>(
+        `/admin/manual-attendance/${encodeURIComponent(manualEditForm.userId)}`,
+        {
+          method: "PUT",
+          body: JSON.stringify({
+            date: manualEditForm.date,
+            status: manualEditForm.attendance,
+            reason: manualEditForm.reason.trim(),
+          }),
+        },
+      );
+      setManualMessage("Manual attendance saved successfully.");
+      setManualMessageIsError(false);
+      setManualEditForm(null);
+      await Promise.all([
+        loadManualAttendance(),
+        loadMonthlyMonths(),
+        loadMonthlyAttendance(),
+      ]);
+      if (view === "overview") {
+        await loadOverview();
+      }
+    } catch (error) {
+      setManualMessageIsError(true);
+      setManualMessage(
+        error instanceof Error
+          ? error.message
+          : "Failed to save manual attendance.",
+      );
+    } finally {
+      setManualSaveBusy(false);
     }
   }
 
@@ -498,7 +665,12 @@ function AdminContent({
   async function handleExportCsv(
     target: Extract<
       AdminView,
-      "overview" | "users" | "credentials" | "shifts" | "attendance"
+      | "overview"
+      | "users"
+      | "credentials"
+      | "shifts"
+      | "attendance"
+      | "manual-attendance"
     >,
   ) {
     if (exportingView) return;
@@ -531,11 +703,16 @@ function AdminContent({
       filterSummary = `Role: ${shiftsRoleFilter || "All roles"} | Search: ${
         shiftsSearch.trim() || "none"
       }`;
-    } else {
+    } else if (target === "attendance") {
       count = monthlyData.length;
       filterSummary = `Month: ${monthlyMonth} | Role: ${
         monthlyRoleFilter || "All roles"
       } | Search: ${monthlySearch.trim() || "none"}`;
+    } else {
+      count = manualData.length;
+      filterSummary = `Date: ${manualDate} | Role: ${
+        manualRoleFilter || "All roles"
+      } | Search: ${manualSearch.trim() || "none"}`;
     }
 
     const confirmed = await requestConfirmation({
@@ -625,7 +802,7 @@ function AdminContent({
             row.status,
           ]),
         );
-      } else {
+      } else if (target === "attendance") {
         downloadCsvFile(
           `monthly-attendance-${monthlyMonth}.csv`,
           [
@@ -655,6 +832,28 @@ function AdminContent({
             String(row.latePenaltyAbsents),
             String(row.effectivePresent),
             String(row.effectiveAbsent),
+          ]),
+        );
+      } else {
+        downloadCsvFile(
+          "manual-attendance.csv",
+          [
+            "Name",
+            "Gmail",
+            "Role",
+            "Unique ID",
+            "Attendance",
+            "Reason",
+            "Marked By Admin",
+          ],
+          manualData.map((row) => [
+            row.fullName,
+            row.email,
+            row.role,
+            row.uniqueId,
+            row.attendance,
+            row.reason || "",
+            row.markedByAdmin ? "Yes" : "No",
           ]),
         );
       }
@@ -1191,6 +1390,12 @@ function AdminContent({
     }
   }, [view]);
 
+  useEffect(() => {
+    if (view === "manual-attendance") {
+      void loadManualAttendance();
+    }
+  }, [view]);
+
   const filteredCount = useMemo(() => logs.length, [logs]);
   const pendingUsers = useMemo(
     () => usersData.filter((row) => !row.generated),
@@ -1245,6 +1450,16 @@ function AdminContent({
     return monthlyData.slice(start, start + USER_PAGE_SIZE);
   }, [monthlyData, monthlyPageClamped]);
 
+  const manualTotalPages = Math.max(
+    1,
+    Math.ceil(manualData.length / USER_PAGE_SIZE),
+  );
+  const manualPageClamped = Math.min(manualListPage, manualTotalPages);
+  const manualPagedRows = useMemo(() => {
+    const start = (manualPageClamped - 1) * USER_PAGE_SIZE;
+    return manualData.slice(start, start + USER_PAGE_SIZE);
+  }, [manualData, manualPageClamped]);
+
   const usersTotalPages = Math.max(
     1,
     Math.ceil(usersData.length / USER_PAGE_SIZE),
@@ -1282,6 +1497,11 @@ function AdminContent({
       setMonthlyListPage(monthlyTotalPages);
     }
   }, [monthlyListPage, monthlyTotalPages]);
+  useEffect(() => {
+    if (manualListPage > manualTotalPages) {
+      setManualListPage(manualTotalPages);
+    }
+  }, [manualListPage, manualTotalPages]);
 
   useEffect(() => {
     if (!userDetailsRow) return;
@@ -1425,6 +1645,9 @@ function AdminContent({
         case "attendance":
           await Promise.all([loadMonthlyMonths(), loadMonthlyAttendance()]);
           break;
+        case "manual-attendance":
+          await loadManualAttendance();
+          break;
         default:
           break;
       }
@@ -1553,6 +1776,19 @@ function AdminContent({
             }}
           >
             Attendance
+          </button>
+          <button
+            type="button"
+            className={
+              view === "manual-attendance" ? "role-tab active" : "role-tab"
+            }
+            onClick={() => {
+              setView("manual-attendance");
+              setMobileNavOpen(false);
+              void loadManualAttendance();
+            }}
+          >
+            Manual Attendance
           </button>
         </section>
 
@@ -1738,22 +1974,16 @@ function AdminContent({
                           <td>{log.purpose ?? "N/A"}</td>
                           <td>
                             <span
-                              className={
-                                log.type === "Time In"
-                                  ? "badge green"
-                                  : "badge indigo"
-                              }
+                              className={getAttendanceTypeBadgeClass(log.type)}
                             >
                               {log.type}
                             </span>
                           </td>
                           <td>
                             <span
-                              className={
-                                log.status === "Late"
-                                  ? "badge red"
-                                  : "badge green"
-                              }
+                              className={getAttendanceStatusBadgeClass(
+                                log.status,
+                              )}
                             >
                               {log.status}
                             </span>
@@ -2117,11 +2347,21 @@ function AdminContent({
                 </select>
                 <button
                   type="button"
-                  className="primary-btn slim"
+                  className="primary-btn slim overview-search-submit"
                   onClick={() => void loadUsersData()}
                   disabled={usersBusy}
                 >
-                  Search
+                  {usersBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Searching…
+                    </span>
+                  ) : (
+                    "Search"
+                  )}
                 </button>
                 <button
                   type="button"
@@ -2827,11 +3067,21 @@ function AdminContent({
                 </select>
                 <button
                   type="button"
-                  className="primary-btn slim"
+                  className="primary-btn slim overview-search-submit"
                   onClick={() => void loadCredentials()}
                   disabled={credentialsBusy}
                 >
-                  Search
+                  {credentialsBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Searching…
+                    </span>
+                  ) : (
+                    "Search"
+                  )}
                 </button>
                 <button
                   type="button"
@@ -2975,11 +3225,21 @@ function AdminContent({
                 </select>
                 <button
                   type="button"
-                  className="primary-btn slim"
+                  className="primary-btn slim overview-search-submit"
                   onClick={() => void loadShifts()}
                   disabled={shiftsBusy}
                 >
-                  Search
+                  {shiftsBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Searching…
+                    </span>
+                  ) : (
+                    "Search"
+                  )}
                 </button>
                 <button
                   type="button"
@@ -3132,11 +3392,21 @@ function AdminContent({
                 </select>
                 <button
                   type="button"
-                  className="primary-btn slim"
+                  className="primary-btn slim overview-search-submit"
                   onClick={() => void loadMonthlyAttendance()}
                   disabled={monthlyBusy}
                 >
-                  Search
+                  {monthlyBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Searching…
+                    </span>
+                  ) : (
+                    "Search"
+                  )}
                 </button>
                 <button
                   type="button"
@@ -3242,7 +3512,312 @@ function AdminContent({
             </div>
           </section>
         ) : null}
+
+        {view === "manual-attendance" ? (
+          <section className="table-card user-generator-card">
+            <div className="table-head">
+              <h2>Manual Attendance</h2>
+              <span>{manualDate}</span>
+            </div>
+            <div className="user-generator-body">
+              <section className="filters-bar compact-filters monthly-inline-filters">
+                <input
+                  value={manualSearch}
+                  onChange={(event) => setManualSearch(event.target.value)}
+                  placeholder="Search users by name, role, id, email"
+                  className="search-input"
+                />
+                <select
+                  value={manualRoleFilter}
+                  onChange={(event) => setManualRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter manual attendance by role"
+                >
+                  {MANUAL_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option key={`manual-${opt.value}`} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={manualDate}
+                  onChange={(event) => setManualDate(event.target.value)}
+                  type="date"
+                  className="overview-date-input-visible"
+                />
+                <button
+                  type="button"
+                  className="primary-btn slim overview-search-submit"
+                  onClick={() => void loadManualAttendance()}
+                  disabled={manualBusy}
+                >
+                  {manualBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Searching…
+                    </span>
+                  ) : (
+                    "Search"
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={() => void handleExportCsv("manual-attendance")}
+                  disabled={exportingView === "manual-attendance"}
+                >
+                  {exportingView === "manual-attendance"
+                    ? "Exporting..."
+                    : "Export CSV"}
+                </button>
+              </section>
+
+              {manualMessage ? (
+                <div
+                  className={`notice ${manualMessageIsError ? "error" : "success"}`}
+                >
+                  {manualMessage}
+                </div>
+              ) : null}
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Unique ID</th>
+                      <th>Role</th>
+                      <th>Attendance</th>
+                      <th>Reason</th>
+                      <th>Marked By Admin</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {manualData.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="empty-row">
+                          No users found.
+                        </td>
+                      </tr>
+                    ) : (
+                      manualPagedRows.map((row) => (
+                        <tr key={row.userId}>
+                          <td>
+                            <strong>{row.fullName}</strong>
+                            <small>{row.email}</small>
+                          </td>
+                          <td>{row.uniqueId}</td>
+                          <td>{row.role}</td>
+                          <td>
+                            <span
+                              className={
+                                row.attendance === "Present"
+                                  ? "badge green"
+                                  : row.attendance === "Late"
+                                    ? "badge amber"
+                                    : "badge red"
+                              }
+                            >
+                              {row.attendance}
+                            </span>
+                          </td>
+                          <td>{row.reason || "—"}</td>
+                          <td>
+                            <span
+                              className={
+                                row.markedByAdmin
+                                  ? "badge amber"
+                                  : "badge green"
+                              }
+                            >
+                              {row.markedByAdmin ? "Yes" : "No"}
+                            </span>
+                          </td>
+                          <td>
+                            <div className="row-actions">
+                              <button
+                                type="button"
+                                className="text-btn"
+                                onClick={() => openManualEdit(row)}
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {manualData.length > 0 ? (
+                <div className="users-pagination">
+                  <span className="users-pagination-meta">
+                    Page {manualPageClamped} of {manualTotalPages} ·{" "}
+                    {manualData.length} user{manualData.length === 1 ? "" : "s"}
+                  </span>
+                  <div className="users-pagination-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={manualPageClamped <= 1}
+                      onClick={() =>
+                        setManualListPage((page) => Math.max(1, page - 1))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn slim"
+                      disabled={manualPageClamped >= manualTotalPages}
+                      onClick={() =>
+                        setManualListPage((page) =>
+                          Math.min(manualTotalPages, page + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="notice info">
+                Manual save removes the selected day&apos;s auto Time In / Time
+                Out logs and keeps only the admin-marked record.
+              </div>
+            </div>
+          </section>
+        ) : null}
       </main>
+
+      {manualEditForm
+        ? createPortal(
+            <div
+              className="admin-modal-backdrop"
+              role="presentation"
+              onClick={closeManualEdit}
+            >
+              <div
+                className="admin-modal-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="manual-attendance-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="admin-modal-head">
+                  <h3 id="manual-attendance-title">Manual Attendance</h3>
+                  <button
+                    type="button"
+                    className="ghost-btn modal-close-btn"
+                    onClick={closeManualEdit}
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <form className="admin-modal-body" onSubmit={handleManualSave}>
+                  <dl className="detail-dl">
+                    <div>
+                      <dt>Name</dt>
+                      <dd>{manualEditForm.fullName}</dd>
+                    </div>
+                    <div>
+                      <dt>Gmail</dt>
+                      <dd>{manualEditForm.email}</dd>
+                    </div>
+                    <div>
+                      <dt>Unique ID</dt>
+                      <dd>{manualEditForm.uniqueId}</dd>
+                    </div>
+                    <div>
+                      <dt>Role</dt>
+                      <dd>{manualEditForm.role}</dd>
+                    </div>
+                  </dl>
+                  <div className="users-add-form detailed modal-edit-form">
+                    <input
+                      className="search-input"
+                      type="date"
+                      value={manualEditForm.date}
+                      disabled
+                      required
+                    />
+                    <select
+                      className="search-input"
+                      value={manualEditForm.attendance}
+                      onChange={(event) =>
+                        setManualEditForm((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                attendance: event.target.value as
+                                  | "Present"
+                                  | "Absent"
+                                  | "Late",
+                              }
+                            : prev,
+                        )
+                      }
+                      required
+                    >
+                      <option value="Present">Present</option>
+                      <option value="Absent">Absent</option>
+                      <option value="Late">Late</option>
+                    </select>
+                    <label className="field-label">
+                      Reason
+                      <textarea
+                        className="search-input"
+                        rows={4}
+                        value={manualEditForm.reason}
+                        onChange={(event) =>
+                          setManualEditForm((prev) =>
+                            prev
+                              ? { ...prev, reason: event.target.value }
+                              : prev,
+                          )
+                        }
+                        placeholder="Write the reason for this manual attendance update"
+                        required
+                      />
+                    </label>
+                  </div>
+                  {manualMessage ? (
+                    <div
+                      className={`notice ${manualMessageIsError ? "error" : "success"}`}
+                    >
+                      {manualMessage}
+                    </div>
+                  ) : null}
+                  <div className="admin-modal-actions">
+                    <button
+                      type="button"
+                      className="ghost-btn"
+                      onClick={closeManualEdit}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="primary-btn slim"
+                      disabled={manualSaveBusy}
+                    >
+                      {manualSaveBusy ? "Saving..." : "Save Attendance"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
 
       {selectedImage ? (
         <div className="modal-backdrop" onClick={() => setSelectedImage(null)}>
