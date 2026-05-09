@@ -85,5 +85,4 @@ Web host:
 
 - `VITE_API_URL=https://your-api-domain`
 
-
 Guest attendance does not require an account.

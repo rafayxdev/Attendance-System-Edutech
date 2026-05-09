@@ -458,6 +458,16 @@ function parseSchedulePayload(payload: unknown): SchedulePayload | null {
   };
 }
 
+function normalizeEmailParam(raw: unknown): string {
+  const value = String(raw ?? "").trim();
+  if (!value) return "";
+  try {
+    return decodeURIComponent(value).trim().toLowerCase();
+  } catch {
+    return value.toLowerCase();
+  }
+}
+
 function generatePassword(length = 10): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   let output = "";
@@ -909,6 +919,43 @@ adminRouter.get(
   },
 );
 
+adminRouter.get(
+  "/users-data/:email",
+  async (request: AuthenticatedRequest, response) => {
+    const email = normalizeEmailParam(request.params.email);
+    if (!email) {
+      response.status(400).json({ message: "Invalid email." });
+      return;
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      response.status(404).json({ message: "User not found." });
+      return;
+    }
+
+    const scheduleLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+
+    const latestSchedule = scheduleLogs
+      .map((log) => parseSchedulePayload(log.payload))
+      .find((payload) => payload?.email === email);
+
+    response.json({
+      email: user.email,
+      role: user.role,
+      fullName: user.fullName,
+      uniqueId: user.uniqueId ?? "N/A",
+      attendanceSchedule: latestSchedule?.schedule ?? [],
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+    });
+  },
+);
+
 adminRouter.post(
   "/users-data",
   async (request: AuthenticatedRequest, response) => {
@@ -996,7 +1043,7 @@ adminRouter.put(
       return;
     }
 
-    const currentEmail = String(request.params.email).trim().toLowerCase();
+    const currentEmail = normalizeEmailParam(request.params.email);
     const existing = await prisma.user.findUnique({
       where: { email: currentEmail },
     });
@@ -1109,7 +1156,7 @@ adminRouter.put(
 adminRouter.delete(
   "/users-data/:email",
   async (request: AuthenticatedRequest, response) => {
-    const email = String(request.params.email).trim().toLowerCase();
+    const email = normalizeEmailParam(request.params.email);
     const result = await purgeUserAndAllRecords(email);
     if (result === "not_found") {
       response.status(404).json({ message: "User not found." });
