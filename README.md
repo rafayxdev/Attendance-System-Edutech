@@ -86,3 +86,61 @@ Web host:
 - `VITE_API_URL=https://your-api-domain`
 
 Guest attendance does not require an account.
+
+## Vercel Deployment
+
+This project is configured for one-click deployment on Vercel.
+
+### One-click deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Frafayxdev%2FAttendance-System-Edutech)
+
+### Manual deploy steps
+
+1. Push this repository to GitHub.
+2. Go to [vercel.com/new](https://vercel.com/new) and import the repository.
+3. The `vercel.json` at the root handles monorepo configuration automatically.
+4. **Set environment variables** in the Vercel dashboard:
+
+   | Variable | Description |
+   |---|---|
+   | `DATABASE_URL` | PostgreSQL connection string (Supabase/Neon) |
+   | `JWT_SECRET` | Long random string for JWT signing |
+   | `NODE_ENV` | Set to `production` |
+   | `ACCESS_PROFILE` | `home` or `university` |
+   | `ACCESS_GATE_ENFORCED` | `false` to disable location/IP gating |
+   | `APP_TIMEZONE` | e.g. `Asia/Karachi` |
+   | `VITE_API_URL` | Your Vercel deployment URL (same as frontend) |
+   | `GMAIL_USER` | (Optional) Gmail for email receipts |
+   | `GMAIL_APP_PASSWORD` | (Optional) Google App Password |
+
+5. Deploy! The build will:
+   - Install npm dependencies
+   - Generate Prisma client
+   - Build the React frontend
+   - The API is deployed as a Vercel serverless function (route `/api/*`)
+   - The frontend is deployed as a static SPA (all other routes)
+
+> :memo: The first deploy will fail until you set `DATABASE_URL` in the Vercel project environment variables.
+
+### Environment variables
+
+Copy `.env.example` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+### Local development
+
+```bash
+npm install
+npm run dev:api   # Terminal 1 - API on port 4000
+npm run dev:web   # Terminal 2 - Web on port 5173
+```
+
+### Troubleshooting
+
+- **API returns 404**: Ensure `VITE_API_URL` is set correctly and the API routes work at `/api/*`
+- **Prisma errors**: Verify `DATABASE_URL` is correct and the database allows connections from Vercel's IP range
+- **CORS errors**: The API allows all origins in development; for production, restrict as needed

@@ -3,6 +3,7 @@ dist
 build
 .env
 .env.*
+!.env.example
 coverage
 apps/*/dist
 apps/*/.vite

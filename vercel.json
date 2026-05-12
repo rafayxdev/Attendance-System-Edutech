@@ -1,0 +1,9 @@
+{
+  "buildCommand": "cd apps/api && npx prisma generate && cd ../.. && npm run build -w @edutech/web",
+  "installCommand": "npm install",
+  "outputDirectory": "apps/web/dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}
