@@ -10,3 +10,5 @@ apps/*/.vite
 apps/*/node_modules
 apps/api/prisma/dev.db
 apps/api/prisma/dev.db-journal
+
+.vercel
