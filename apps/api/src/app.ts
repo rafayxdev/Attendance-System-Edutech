@@ -78,7 +78,10 @@ export function createApp() {
   app.set("trust proxy", 1);
   app.use(cors({ origin: true, credentials: true }));
   app.use(express.json({ limit: "8mb" }));
-  
+
+  app.get("/health", (_request, response) => {
+    response.json({ ok: true });
+  });
 
   app.use("/config", configRouter);
   app.use("/auth", authRouter);
