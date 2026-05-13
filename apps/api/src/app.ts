@@ -77,20 +77,8 @@ export function createApp() {
 
   app.set("trust proxy", 1);
   app.use(cors({ origin: true, credentials: true }));
+  app.use(express.json({ limit: "8mb" }));
   
-  app.get("/health", (_request, response) => {
-    response.json({ ok: true });
-  });
-  
-  app.post("/test-body", (request, response) => {
-    response.json({
-      body: request.body,
-      bodyType: typeof request.body,
-      bodyIsObject: typeof request.body === "object" && request.body !== null,
-      isArray: Array.isArray(request.body),
-      keys: typeof request.body === "object" ? Object.keys(request.body ?? {}) : [],
-    });
-  });
 
   app.use("/config", configRouter);
   app.use("/auth", authRouter);
