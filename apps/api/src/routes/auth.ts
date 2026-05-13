@@ -45,7 +45,7 @@ function canonicalRole(value: string | null | undefined): string {
 authRouter.post("/login", async (request, response) => {
   const parsed = loginSchema.safeParse(request.body);
   if (!parsed.success) {
-    response.status(400).json({ message: "Invalid login payload" });
+    response.status(400).json({ message: "Invalid login payload", errors: parsed.error.flatten() });
     return;
   }
 
