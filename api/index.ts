@@ -9,7 +9,15 @@ export default async function handler(
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
       const bodyStr = Buffer.concat(chunks).toString("utf-8");
-      req.body = bodyStr ? JSON.parse(bodyStr) : {};
+      try {
+        req.body = bodyStr ? JSON.parse(bodyStr) : {};
+      } catch {
+        return res.status(400).json({
+          error: "Invalid JSON body",
+          raw: bodyStr.slice(0, 200),
+          rawLength: bodyStr.length,
+        });
+      }
     }
 
     const { createApp } = await import("../apps/api/src/app.js");
