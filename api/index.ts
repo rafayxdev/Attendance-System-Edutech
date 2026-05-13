@@ -1,17 +1,24 @@
-import { createApp } from "../apps/api/src/app.js";
+let app: any;
 
-const app = createApp();
+async function getApp() {
+  if (!app) {
+    const { createApp } = await import("../apps/api/src/app.js");
+    app = createApp();
+  }
+  return app;
+}
 
 export default async function handler(
   req: any,
   res: any,
 ) {
   try {
+    const app = await getApp();
     app(req, res);
-  } catch (err) {
-    console.error("Unhandled error in Express handler:", err);
+  } catch (err: any) {
+    console.error("Express handler error:", err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Internal server error" });
+      res.status(500).json({ error: "Server error", message: err?.message });
     }
   }
 }
