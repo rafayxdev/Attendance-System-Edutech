@@ -102,11 +102,8 @@ export function createApp() {
         response.status(mapped.status).json({ message: mapped.message });
         return;
       }
-      const message =
-        error instanceof Error ? error.message : String(error);
-      const stack = error instanceof Error ? error.stack : undefined;
-      console.error(message, stack);
-      response.status(500).json({ message: "Internal server error", error: message });
+      console.error(error);
+      response.status(500).json({ message: "Internal server error" });
     },
   );
 
