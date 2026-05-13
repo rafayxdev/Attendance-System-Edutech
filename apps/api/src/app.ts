@@ -77,36 +77,19 @@ export function createApp() {
 
   app.set("trust proxy", 1);
   app.use(cors({ origin: true, credentials: true }));
-  app.use((request, _response, next) => {
-    if (request.body && typeof request.body === "object") {
-      return next();
-    }
-    if (typeof request.body === "string") {
-      try {
-        request.body = JSON.parse(request.body);
-      } catch {
-        return next();
-      }
-      return next();
-    }
-    const bodyBuffer: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => bodyBuffer.push(chunk));
-    request.on("end", () => {
-      if (bodyBuffer.length > 0) {
-        const raw = Buffer.concat(bodyBuffer).toString();
-        try {
-          request.body = JSON.parse(raw);
-        } catch {
-          request.body = raw;
-        }
-      }
-      next();
-    });
-    request.on("error", next);
-  });
-
+  
   app.get("/health", (_request, response) => {
     response.json({ ok: true });
+  });
+  
+  app.post("/test-body", (request, response) => {
+    response.json({
+      body: request.body,
+      bodyType: typeof request.body,
+      bodyIsObject: typeof request.body === "object" && request.body !== null,
+      isArray: Array.isArray(request.body),
+      keys: typeof request.body === "object" ? Object.keys(request.body ?? {}) : [],
+    });
   });
 
   app.use("/config", configRouter);
