@@ -6,6 +6,8 @@ export default async function handler(
     ok: true,
     message: "Root API function works!",
     url: req.url,
+    originalUrl: req.originalUrl,
     method: req.method,
+    headers: req.headers,
   });
 }
