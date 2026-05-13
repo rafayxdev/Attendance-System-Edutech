@@ -14,6 +14,7 @@
     { "source": "/attendance", "destination": "/api" },
     { "source": "/admin/:path*", "destination": "/api" },
     { "source": "/admin", "destination": "/api" },
+    { "source": "/test-body", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
