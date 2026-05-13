@@ -86,7 +86,7 @@ export function ImageCapture({
     const fallbackConstraints: MediaStreamConstraints[] = [
       {
         video: {
-          facingMode: { ideal: "environment" },
+          facingMode: { ideal: "user" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
@@ -94,7 +94,7 @@ export function ImageCapture({
       },
       {
         video: {
-          facingMode: "user",
+          facingMode: { ideal: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
