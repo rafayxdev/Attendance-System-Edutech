@@ -1,24 +1,23 @@
-let app: any;
-
-async function getApp() {
-  if (!app) {
-    const { createApp } = await import("../apps/api/src/app.js");
-    app = createApp();
-  }
-  return app;
-}
-
 export default async function handler(
   req: any,
   res: any,
 ) {
   try {
-    const app = await getApp();
+    if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const bodyStr = Buffer.concat(chunks).toString("utf-8");
+      req.body = bodyStr ? JSON.parse(bodyStr) : {};
+    }
+
+    const { createApp } = await import("../apps/api/src/app.js");
+    const app = createApp();
     app(req, res);
   } catch (err: any) {
-    console.error("Express handler error:", err);
     if (!res.headersSent) {
-      res.status(500).json({ error: "Server error", message: err?.message });
+      res.status(500).json({ error: "Server error", message: err?.message, stack: err?.stack });
     }
   }
 }
