@@ -78,10 +78,20 @@ export function createApp() {
   app.set("trust proxy", 1);
   app.use(cors({ origin: true, credentials: true }));
   app.use((request, _response, next) => {
-    if (request.body && typeof request.body === "object") {
-      return next();
-    }
-    express.json({ limit: "8mb" })(request, _response, next);
+    const bodyBuffer: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => bodyBuffer.push(chunk));
+    request.on("end", () => {
+      if (bodyBuffer.length > 0) {
+        const raw = Buffer.concat(bodyBuffer).toString();
+        try {
+          request.body = JSON.parse(raw);
+        } catch {
+          request.body = raw;
+        }
+      }
+      next();
+    });
+    request.on("error", next);
   });
 
   app.get("/health", (_request, response) => {
