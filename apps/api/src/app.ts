@@ -78,6 +78,17 @@ export function createApp() {
   app.set("trust proxy", 1);
   app.use(cors({ origin: true, credentials: true }));
   app.use((request, _response, next) => {
+    if (request.body && typeof request.body === "object") {
+      return next();
+    }
+    if (typeof request.body === "string") {
+      try {
+        request.body = JSON.parse(request.body);
+      } catch {
+        return next();
+      }
+      return next();
+    }
     const bodyBuffer: Buffer[] = [];
     request.on("data", (chunk: Buffer) => bodyBuffer.push(chunk));
     request.on("end", () => {
