@@ -3,12 +3,17 @@
   "installCommand": "npm install --include=dev",
   "outputDirectory": "apps/web/dist",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api" },
+    { "source": "/api/:path*", "destination": "/api" },
+    { "source": "/api", "destination": "/api" },
     { "source": "/health", "destination": "/api" },
-    { "source": "/config/(.*)", "destination": "/api" },
-    { "source": "/auth/(.*)", "destination": "/api" },
-    { "source": "/attendance/(.*)", "destination": "/api" },
-    { "source": "/admin/(.*)", "destination": "/api" },
+    { "source": "/config/:path*", "destination": "/api" },
+    { "source": "/config", "destination": "/api" },
+    { "source": "/auth/:path*", "destination": "/api" },
+    { "source": "/auth", "destination": "/api" },
+    { "source": "/attendance/:path*", "destination": "/api" },
+    { "source": "/attendance", "destination": "/api" },
+    { "source": "/admin/:path*", "destination": "/api" },
+    { "source": "/admin", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
