@@ -976,7 +976,15 @@ adminRouter.post(
       });
       return;
     }
-    if (hasInvalidScheduleRange(attendanceSchedule)) {
+    if (
+      hasInvalidScheduleRange(
+        attendanceSchedule as Array<{
+          day: string;
+          startTime: string;
+          endTime: string;
+        }>,
+      )
+    ) {
       response.status(400).json({
         message:
           "Each attendance schedule must have end time after start time.",
@@ -1064,7 +1072,16 @@ adminRouter.put(
     const nextIsActive = parsed.data.isActive ?? existing.isActive;
     const attendanceSchedule = parsed.data.attendanceSchedule;
 
-    if (attendanceSchedule && hasInvalidScheduleRange(attendanceSchedule)) {
+    if (
+      attendanceSchedule &&
+      hasInvalidScheduleRange(
+        attendanceSchedule as Array<{
+          day: string;
+          startTime: string;
+          endTime: string;
+        }>,
+      )
+    ) {
       response.status(400).json({
         message:
           "Each attendance schedule must have end time after start time.",

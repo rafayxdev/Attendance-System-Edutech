@@ -1,13 +1,17 @@
+import { createApp } from "../apps/api/src/app.js";
+
+const app = createApp();
+
 export default async function handler(
   req: any,
   res: any,
 ) {
-  res.status(200).json({
-    ok: true,
-    message: "Root API function works!",
-    url: req.url,
-    originalUrl: req.originalUrl,
-    method: req.method,
-    headers: req.headers,
-  });
+  try {
+    app(req, res);
+  } catch (err) {
+    console.error("Unhandled error in Express handler:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
 }
