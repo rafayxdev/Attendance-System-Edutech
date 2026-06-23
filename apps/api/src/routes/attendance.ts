@@ -6,83 +6,20 @@ import {
   allowedPrefixMatch,
   calculateDistanceMeters,
   formatDayKey,
-  formatWallHm12h,
   imageBufferFromDataUrl,
   shouldEnforceAccessGate,
 } from "../lib/rules.js";
 import { env } from "../config/env.js";
 import { sendAttendanceEmail } from "../lib/email.js";
+import {
+  evaluateDayScheduleForEffective,
+  evaluateScheduleWindowForEffective,
+  getEffectiveDaySchedule,
+  getWeekdayKey,
+  type ScheduleDay,
+} from "../lib/schedules.js";
 
 export const attendanceRouter = Router();
-const scheduleAuditAction = "USER_ATTENDANCE_SCHEDULE";
-
-type ScheduleDay = "mon" | "tue" | "wed" | "thu" | "fri";
-
-function parseAttendanceSchedule(
-  value: unknown,
-): Array<{ day: ScheduleDay; startTime: string; endTime: string }> {
-  if (!Array.isArray(value)) return [];
-  const validDays = new Set<ScheduleDay>(["mon", "tue", "wed", "thu", "fri"]);
-  const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
-  return value
-    .filter((row): row is Record<string, unknown> => Boolean(row))
-    .map((row) => ({
-      day: String(row.day || "").toLowerCase() as ScheduleDay,
-      startTime: String(row.startTime || ""),
-      endTime: String(row.endTime || ""),
-    }))
-    .filter(
-      (row) =>
-        validDays.has(row.day) &&
-        timeRegex.test(row.startTime) &&
-        timeRegex.test(row.endTime),
-    );
-}
-
-async function getUserScheduleByEmail(email: string) {
-  const logs = await prisma.auditLog.findMany({
-    where: { action: scheduleAuditAction },
-    orderBy: { createdAt: "desc" },
-    take: 5000,
-  });
-  const emailKey = email.trim().toLowerCase();
-  const latest = logs
-    .map((log) => log.payload)
-    .map((payload) => {
-      if (!payload || typeof payload !== "object") return null;
-      const row = payload as Record<string, unknown>;
-      if (typeof row.email !== "string") return null;
-      return {
-        email: row.email.trim().toLowerCase(),
-        schedule: parseAttendanceSchedule(row.schedule),
-      };
-    })
-    .find((entry) => entry?.email === emailKey);
-  return latest?.schedule ?? [];
-}
-
-function toMinutes(time: string): number {
-  const parts = time.split(":").map(Number);
-  const hour = parts[0] ?? 0;
-  const minute = parts[1] ?? 0;
-  return hour * 60 + minute;
-}
-
-function getWeekdayKey(date: Date, timeZone: string): string {
-  const label = new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    timeZone,
-  })
-    .format(date)
-    .toLowerCase();
-  if (label.startsWith("mon")) return "mon";
-  if (label.startsWith("tue")) return "tue";
-  if (label.startsWith("wed")) return "wed";
-  if (label.startsWith("thu")) return "thu";
-  if (label.startsWith("fri")) return "fri";
-  if (label.startsWith("sat")) return "sat";
-  return "sun";
-}
 
 function parseMonthFromDayKey(
   dayKey: string,
@@ -186,136 +123,6 @@ async function upsertMonthlySummary(params: {
     params.incrementPresent,
     params.incrementLate,
   );
-}
-
-function hhmmFromDate(date: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(date);
-  const hour = parts.find((part) => part.type === "hour")?.value ?? "00";
-  const minute = parts.find((part) => part.type === "minute")?.value ?? "00";
-  return `${hour}:${minute}`;
-}
-
-function evaluateScheduleWindow(params: {
-  schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
-  type: "Time In" | "Time Out";
-  now: Date;
-}): { allowed: boolean; status: "On Time" | "Late"; message: string | null } {
-  const weekday = getWeekdayKey(params.now, env.appTimezone);
-  if (!["mon", "tue", "wed", "thu", "fri"].includes(weekday)) {
-    return {
-      allowed: false,
-      status: "On Time",
-      message: "Attendance is only available Monday to Friday.",
-    };
-  }
-
-  const todaySlot = params.schedule.find((row) => row.day === weekday);
-  if (!todaySlot) {
-    return {
-      allowed: false,
-      status: "On Time",
-      message: "Attendance is not configured for today. Please contact admin.",
-    };
-  }
-
-  const nowMinutes = toMinutes(hhmmFromDate(params.now, env.appTimezone));
-  const startMinutes = toMinutes(todaySlot.startTime);
-  const endMinutes = toMinutes(todaySlot.endTime);
-
-  if (params.type === "Time In") {
-    // Can mark Time In from 1 hour before start time till end time
-    const earliestMinutes = Math.max(0, startMinutes - 60);
-    if (nowMinutes < earliestMinutes) {
-      return {
-        allowed: false,
-        status: "On Time",
-        message: `Time In starts at ${formatWallHm12h(todaySlot.startTime)}.`,
-      };
-    }
-    if (nowMinutes > endMinutes) {
-      return {
-        allowed: false,
-        status: "Late",
-        message: `Time In closed at ${formatWallHm12h(todaySlot.endTime)}.`,
-      };
-    }
-    // Mark as Late if current time is after start time + 15 minutes
-    return {
-      allowed: true,
-      status: nowMinutes > startMinutes + 15 ? "Late" : "On Time",
-      message: null,
-    };
-  }
-
-  if (nowMinutes < endMinutes) {
-    return {
-      allowed: false,
-      status: "On Time",
-      message: `Time Out is after ${formatWallHm12h(todaySlot.endTime)}.`,
-    };
-  }
-  if (nowMinutes > endMinutes + 60) {
-    return {
-      allowed: false,
-      status: "On Time",
-      message: `Time Out closed 1 hour after ${formatWallHm12h(todaySlot.endTime)}.`,
-    };
-  }
-  return { allowed: true, status: "On Time", message: null };
-}
-
-function evaluateDaySchedule(params: {
-  schedule: Array<{ day: ScheduleDay; startTime: string; endTime: string }>;
-  now: Date;
-}): {
-  dayOk: boolean;
-  todaySlot: { day: ScheduleDay; startTime: string; endTime: string } | null;
-  nowMinutes: number;
-  startMinutes: number | null;
-  endMinutes: number | null;
-  messageIfInvalid: string | null;
-} {
-  const weekday = getWeekdayKey(params.now, env.appTimezone);
-  if (!["mon", "tue", "wed", "thu", "fri"].includes(weekday)) {
-    return {
-      dayOk: false,
-      todaySlot: null,
-      nowMinutes: toMinutes(hhmmFromDate(params.now, env.appTimezone)),
-      startMinutes: null,
-      endMinutes: null,
-      messageIfInvalid: "Attendance is only available Monday to Friday.",
-    };
-  }
-
-  const todaySlot = params.schedule.find((row) => row.day === weekday) ?? null;
-  if (!todaySlot) {
-    return {
-      dayOk: false,
-      todaySlot: null,
-      nowMinutes: toMinutes(hhmmFromDate(params.now, env.appTimezone)),
-      startMinutes: null,
-      endMinutes: null,
-      messageIfInvalid:
-        "Attendance is not configured for today. Please contact admin.",
-    };
-  }
-
-  const nowMinutes = toMinutes(hhmmFromDate(params.now, env.appTimezone));
-  const startMinutes = toMinutes(todaySlot.startTime);
-  const endMinutes = toMinutes(todaySlot.endTime);
-  return {
-    dayOk: true,
-    todaySlot,
-    nowMinutes,
-    startMinutes,
-    endMinutes,
-    messageIfInvalid: null,
-  };
 }
 
 const attendanceSchema = z.object({
@@ -446,18 +253,27 @@ attendanceRouter.post(
 
     const now = new Date();
     const dayKey = formatDayKey(now);
-    const schedule = await getUserScheduleByEmail(user.email);
+    const effective = await getEffectiveDaySchedule({
+      userId: user.id,
+      email: user.email,
+      now,
+      dayKey,
+    });
     let scheduleStatus: "On Time" | "Late" | null = null;
-    if (schedule.length === 0) {
-      response.status(400).json({
-        message:
-          "Your attendance schedule is not configured. Please contact admin.",
-      });
+
+    if (!effective.slot) {
+      const message =
+        effective.weeklySchedule.length === 0
+          ? "Your attendance schedule is not configured. Please contact admin."
+          : (evaluateDayScheduleForEffective({ effective, now })
+              .messageIfInvalid ??
+            "Attendance is not available for today.");
+      response.status(400).json({ message });
       return;
     }
 
-    const window = evaluateScheduleWindow({
-      schedule,
+    const window = evaluateScheduleWindowForEffective({
+      effective,
       type: parsed.data.type,
       now,
     });
@@ -524,7 +340,9 @@ attendanceRouter.post(
     if (parsed.data.type === "Time Out") {
       const month = parseMonthFromDayKey(dayKey);
       if (month) {
-        const scheduleDays = new Set(schedule.map((s) => s.day));
+        const scheduleDays = new Set(
+          effective.weeklySchedule.map((s) => s.day),
+        );
         const totalWeekdays = countTotalWeekdaysInMonth({
           year: month.year,
           month: month.month,
@@ -672,35 +490,46 @@ attendanceRouter.get(
     const hasTimeIn = logs.some((log) => log.attendanceType === "Time In");
     const hasTimeOut = logs.some((log) => log.attendanceType === "Time Out");
 
-    const schedule = await getUserScheduleByEmail(user.email);
-    if (schedule.length === 0) {
+    const effective = await getEffectiveDaySchedule({
+      userId: user.id,
+      email: user.email,
+      now,
+      dayKey,
+    });
+
+    if (!effective.slot) {
+      const invalidMessage =
+        effective.weeklySchedule.length === 0
+          ? "Your attendance schedule is not configured. Please contact admin."
+          : (evaluateDayScheduleForEffective({ effective, now })
+              .messageIfInvalid ??
+            "Attendance is not available for today.");
       response.json({
         recommendedType: "Time In",
         allowed: false,
-        message:
-          "Your attendance schedule is not configured. Please contact admin.",
+        message: invalidMessage,
         done: hasTimeIn && hasTimeOut,
+        scheduleSource: effective.source,
         allowedByType: {
           "Time In": false,
           "Time Out": false,
         },
         messageByType: {
-          "Time In":
-            "Your attendance schedule is not configured. Please contact admin.",
-          "Time Out":
-            "Your attendance schedule is not configured. Please contact admin.",
+          "Time In": invalidMessage,
+          "Time Out": invalidMessage,
         },
       });
       return;
     }
 
-    const evalDay = evaluateDaySchedule({ schedule, now });
-    if (!evalDay.dayOk || !evalDay.todaySlot || evalDay.startMinutes === null) {
+    const evalDay = evaluateDayScheduleForEffective({ effective, now });
+    if (!evalDay.dayOk || !evalDay.slot || evalDay.startMinutes === null) {
       response.json({
         recommendedType: "Time In",
         allowed: false,
         message: evalDay.messageIfInvalid,
         done: hasTimeIn && hasTimeOut,
+        scheduleSource: effective.source,
         allowedByType: { "Time In": false, "Time Out": false },
         messageByType: {
           "Time In": evalDay.messageIfInvalid,
@@ -713,14 +542,15 @@ attendanceRouter.get(
     const start = evalDay.startMinutes;
     const end = evalDay.endMinutes ?? start;
     const nowMin = evalDay.nowMinutes;
+    const todaySlot = evalDay.slot;
 
-    const timeInWindow = evaluateScheduleWindow({
-      schedule,
+    const timeInWindow = evaluateScheduleWindowForEffective({
+      effective,
       type: "Time In",
       now,
     });
-    const timeOutWindow = evaluateScheduleWindow({
-      schedule,
+    const timeOutWindow = evaluateScheduleWindowForEffective({
+      effective,
       type: "Time Out",
       now,
     });
@@ -751,9 +581,9 @@ attendanceRouter.get(
       recommendedType = "Time In";
       allowed = timeInAllowed;
       if (nowMin < start) {
-        message = `Your Time In will start at ${evalDay.todaySlot.startTime}.`;
+        message = `Your Time In will start at ${todaySlot.startTime}.`;
       } else if (nowMin > end) {
-        message = `Your Time In time is gone (closed at ${evalDay.todaySlot.endTime}).`;
+        message = `Your Time In time is gone (closed at ${todaySlot.endTime}).`;
       } else {
         message = timeInMessage;
       }
@@ -762,9 +592,9 @@ attendanceRouter.get(
       recommendedType = "Time Out";
       allowed = timeOutAllowed;
       if (nowMin < end) {
-        message = `Your Time Out is after ${evalDay.todaySlot.endTime}.`;
+        message = `Your Time Out is after ${todaySlot.endTime}.`;
       } else if (nowMin > end + 60) {
-        message = `Your Time Out time is gone (closed 1 hour after ${evalDay.todaySlot.endTime}).`;
+        message = `Your Time Out time is gone (closed 1 hour after ${todaySlot.endTime}).`;
       } else {
         message = timeOutMessage;
       }
@@ -781,6 +611,7 @@ attendanceRouter.get(
       allowed: effectiveAllowed,
       message: effectiveMessage ?? message,
       done: hasTimeIn && hasTimeOut,
+      scheduleSource: effective.source,
       allowedByType: { "Time In": timeInAllowed, "Time Out": timeOutAllowed },
       messageByType: { "Time In": timeInMessage, "Time Out": timeOutMessage },
     });

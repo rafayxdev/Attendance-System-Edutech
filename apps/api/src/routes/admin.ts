@@ -12,6 +12,19 @@ import {
   formatDisplayDateTime,
   normalizeKey,
 } from "../lib/rules.js";
+import { getEffectiveDaySchedule } from "../lib/schedules.js";
+import {
+  dayCountsAsLate,
+  dayCountsAsPresent,
+  resolveDisplayAttendanceStatus,
+  type AttendanceDayState,
+} from "../lib/attendance-day-status.js";
+import {
+  ensureMonthlyAttendanceTable,
+  monthlyTableExists,
+  monthlyTableName,
+  parseMonthFromDayKey,
+} from "../lib/monthly-attendance.js";
 
 export const adminRouter = Router();
 
@@ -171,26 +184,6 @@ function listMonthDayKeys(params: {
   return days;
 }
 
-function monthlyTableName(monthLabel: string): string {
-  const safe = monthLabel.replace("-", "_");
-  return `monthly_attendance_${safe}`;
-}
-
-function parseMonthFromDayKey(dayKey: string): { label: string } | null {
-  const match = String(dayKey)
-    .trim()
-    .match(/^(\d{4})-(\d{2})-\d{2}$/);
-  if (!match) return null;
-  return { label: `${match[1]}-${match[2]}` };
-}
-
-type AttendanceDayState = {
-  hasTimeIn: boolean;
-  hasTimeOut: boolean;
-  timeInLate: boolean;
-  manualStatus: "Present" | "Absent" | "Late" | null;
-};
-
 function summarizeAttendanceDayState(
   logs: Array<{ attendanceType: string; status: string }>,
 ): AttendanceDayState {
@@ -263,32 +256,6 @@ function applyAttendanceLogToDayState(
   return state;
 }
 
-function dayCountsAsPresent(state: AttendanceDayState): boolean {
-  if (state.manualStatus === "Present") return true;
-  if (state.manualStatus === "Late") return true;
-  if (state.manualStatus === "Absent") return false;
-  return state.hasTimeIn && state.hasTimeOut;
-}
-
-function dayCountsAsLate(state: AttendanceDayState): boolean {
-  if (state.manualStatus === "Late") return true;
-  if (state.manualStatus) return false;
-  return state.hasTimeIn && state.hasTimeOut && state.timeInLate;
-}
-
-async function monthlyTableExists(monthLabel: string): Promise<boolean> {
-  const table = monthlyTableName(monthLabel);
-  const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
-    `
-    SELECT EXISTS (
-      SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = $1
-    ) AS exists;
-    `,
-    table,
-  );
-  return Boolean(rows[0]?.exists);
-}
-
 async function rebuildMonthlySummaryForUser(params: {
   monthLabel: string;
   user: {
@@ -302,8 +269,7 @@ async function rebuildMonthlySummaryForUser(params: {
   const { monthLabel, user } = params;
   const month = parseMonthParam(monthLabel);
   if (!month) return;
-  const exists = await monthlyTableExists(monthLabel);
-  if (!exists) return;
+  await ensureMonthlyAttendanceTable(monthLabel);
 
   const scheduleLogs = await prisma.auditLog.findMany({
     where: { action: scheduleAuditAction },
@@ -906,6 +872,7 @@ adminRouter.get(
 
     response.json(
       users.map((user) => ({
+        userId: user.id,
         email: user.email,
         generated: generatedEmailSet.has(user.email.toLowerCase()),
         role: user.role,
@@ -1233,6 +1200,7 @@ adminRouter.get(
         attendanceType: true,
         status: true,
         purpose: true,
+        createdAt: true,
       },
       orderBy: { createdAt: "asc" },
     });
@@ -1244,6 +1212,7 @@ adminRouter.get(
         attendanceType: string;
         status: string;
         purpose: string | null;
+        createdAt: Date;
       }>
     >();
     for (const log of logs) {
@@ -1254,37 +1223,54 @@ adminRouter.get(
         attendanceType: log.attendanceType,
         status: log.status,
         purpose: log.purpose ?? null,
+        createdAt: log.createdAt,
       });
       logsByUser.set(log.userId, existing);
     }
 
-    response.json(
-      users.map((user) => {
-        const userLogs = logsByUser.get(user.id) ?? [];
-        const state = summarizeAttendanceDayState(
-          userLogs.map((log) => ({
-            attendanceType: log.attendanceType,
-            status: log.status,
-          })),
-        );
-        const manualLog = userLogs.find(
-          (log) => log.attendanceType === "Manual Attendance",
-        );
+    const referenceDate = new Date(`${date}T12:00:00`);
 
-        return {
-          userId: user.id,
-          email: user.email,
-          fullName: user.fullName,
-          role: user.role,
-          uniqueId: user.uniqueId ?? "N/A",
-          attendance:
-            state.manualStatus ??
-            (dayCountsAsPresent(state) ? "Present" : "Absent"),
-          reason: manualLog?.purpose ?? "",
-          attendanceLogId: manualLog?.id ?? null,
-          markedByAdmin: state.manualStatus !== null,
-        };
-      }),
+    response.json(
+      await Promise.all(
+        users.map(async (user) => {
+          const userLogs = logsByUser.get(user.id) ?? [];
+          const state = summarizeAttendanceDayState(
+            userLogs.map((log) => ({
+              attendanceType: log.attendanceType,
+              status: log.status,
+            })),
+          );
+          const manualLog = userLogs.find(
+            (log) => log.attendanceType === "Manual Attendance",
+          );
+          const timeInLog = userLogs.find(
+            (log) => log.attendanceType === "Time In",
+          );
+          const effective = await getEffectiveDaySchedule({
+            userId: user.id,
+            email: user.email,
+            now: referenceDate,
+            dayKey: date,
+          });
+
+          return {
+            userId: user.id,
+            email: user.email,
+            fullName: user.fullName,
+            role: user.role,
+            uniqueId: user.uniqueId ?? "N/A",
+            shiftIn: effective.slot?.startTime ?? "N/A",
+            shiftOut: effective.slot?.endTime ?? "N/A",
+            timeInAt: timeInLog
+              ? formatDisplayDateTime(timeInLog.createdAt).time
+              : "—",
+            attendance: resolveDisplayAttendanceStatus(state),
+            reason: manualLog?.purpose ?? "",
+            attendanceLogId: manualLog?.id ?? null,
+            markedByAdmin: state.manualStatus !== null,
+          };
+        }),
+      ),
     );
   },
 );
@@ -1407,10 +1393,13 @@ adminRouter.get(
   async (request: AuthenticatedRequest, response) => {
     const search = (request.query.search as string | undefined)?.trim() ?? "";
     const role = (request.query.role as string | undefined)?.trim() ?? "";
-    const now = new Date();
-    const todayKey = formatDayKey(now);
+    const dateParam = String(request.query.date ?? "").trim();
+    const dayKey = /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
+      ? dateParam
+      : formatDayKey(new Date());
     const tz = "Asia/Karachi";
-    const todayWeekday = weekdayKey(now, tz);
+    const referenceDate = new Date(`${dayKey}T12:00:00`);
+    const weekday = weekdayKey(referenceDate, tz);
 
     const users = await prisma.user.findMany({
       where: {
@@ -1452,8 +1441,23 @@ adminRouter.get(
       }
     }
 
-    const todaysLogs = await prisma.attendanceLog.findMany({
-      where: { attendanceDay: todayKey, userId: { not: null } },
+    const dayOverrides = await prisma.dayScheduleOverride.findMany({
+      where: {
+        overrideDate: dayKey,
+        userId: { in: users.map((user) => user.id) },
+      },
+      select: {
+        userId: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+    const overrideByUserId = new Map(
+      dayOverrides.map((row) => [row.userId, row]),
+    );
+
+    const dayLogs = await prisma.attendanceLog.findMany({
+      where: { attendanceDay: dayKey, userId: { not: null } },
       select: {
         userId: true,
         attendanceType: true,
@@ -1465,7 +1469,7 @@ adminRouter.get(
     const timeInByUserId = new Map<string, Date>();
     const timeOutByUserId = new Map<string, Date>();
     const statusByUserId = new Map<string, string>();
-    for (const log of todaysLogs) {
+    for (const log of dayLogs) {
       if (!log.userId) continue;
       if (log.attendanceType === "Time In" && !timeInByUserId.has(log.userId)) {
         timeInByUserId.set(log.userId, log.createdAt);
@@ -1481,10 +1485,17 @@ adminRouter.get(
 
     const rows = users.map((user) => {
       const schedule = scheduleByEmail.get(user.email.toLowerCase()) ?? [];
-      const todaySlot =
-        todayWeekday === "sat" || todayWeekday === "sun"
+      const dayOverride = overrideByUserId.get(user.id) ?? null;
+      const weeklySlot =
+        weekday === "sat" || weekday === "sun"
           ? null
-          : (schedule.find((s) => s.day === todayWeekday) ?? null);
+          : (schedule.find((s) => s.day === weekday) ?? null);
+      const activeSlot = dayOverride ?? weeklySlot;
+      const shiftSource = dayOverride
+        ? "override"
+        : weeklySlot
+          ? "weekly"
+          : "none";
       const timeIn = timeInByUserId.get(user.id) ?? null;
       const timeOut = timeOutByUserId.get(user.id) ?? null;
       const timeInStatus = statusByUserId.get(user.id) ?? null;
@@ -1494,12 +1505,14 @@ adminRouter.get(
       if (timeIn && timeOut) attendanceStatus = "Checked out";
 
       return {
+        attendanceDate: dayKey,
         email: user.email,
         fullName: user.fullName,
         role: user.role,
         uniqueId: user.uniqueId ?? "N/A",
-        shiftStart: todaySlot?.startTime ?? "N/A",
-        shiftEnd: todaySlot?.endTime ?? "N/A",
+        shiftStart: activeSlot?.startTime ?? "N/A",
+        shiftEnd: activeSlot?.endTime ?? "N/A",
+        shiftSource,
         timeInAt: timeIn ? formatDisplayDateTime(timeIn).time : "—",
         timeOutAt: timeOut ? formatDisplayDateTime(timeOut).time : "—",
         status: attendanceStatus,
@@ -1849,11 +1862,20 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
     },
   });
 
+  const adminUsers = await prisma.user.findMany({
+    where: { role: { equals: "admin", mode: "insensitive" } },
+    select: { id: true },
+  });
+  const adminUserIds = new Set(adminUsers.map((user) => user.id));
+
   const totalExpectedPresent = await prisma.user.count({
     where: {
       isActive: true,
       NOT: {
-        role: { equals: "guest", mode: "insensitive" },
+        OR: [
+          { role: { equals: "guest", mode: "insensitive" } },
+          { role: { equals: "admin", mode: "insensitive" } },
+        ],
       },
     },
   });
@@ -1881,7 +1903,7 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
       continue;
     }
 
-    if (!log.userId) continue;
+    if (!log.userId || adminUserIds.has(log.userId)) continue;
 
     const current = byUser.get(log.userId) ?? {
       isGuest,
@@ -1912,10 +1934,13 @@ adminRouter.get("/stats", async (_request: AuthenticatedRequest, response) => {
   }
 
   response.json({
-    present: Array.from(byUser.values()).filter(
-      (entry) =>
+    present: Array.from(byUser.entries()).filter(
+      ([userId, entry]) =>
+        !adminUserIds.has(userId) &&
         !entry.isGuest &&
-        (entry.state.hasTimeIn || entry.state.manualStatus === "Present"),
+        (entry.state.hasTimeIn ||
+          entry.state.manualStatus === "Present" ||
+          entry.state.manualStatus === "Late"),
     ).length,
     presentExpected: totalExpectedPresent,
     late,

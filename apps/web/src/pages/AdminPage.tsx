@@ -5,6 +5,7 @@ import { API_URL, apiRequest } from "../api/client";
 import { clearSession, readSession } from "../auth/session";
 import { AccessGate } from "../components/AccessGate";
 import { MetricCard } from "../components/MetricCard";
+import { DayScheduleOverridePanel } from "../components/DayScheduleOverridePanel";
 import { formatWallHm12h } from "../lib/timeDisplay";
 import type { AccessPolicy, AttendanceLogRow, AuthSession } from "../types";
 import logoUrl from "../images/EduTech Logo.png";
@@ -226,12 +227,14 @@ type CredentialRow = {
 };
 
 type ShiftRow = {
+  attendanceDate: string;
   email: string;
   fullName: string;
   role: string;
   uniqueId: string;
   shiftStart: string;
   shiftEnd: string;
+  shiftSource?: "override" | "weekly" | "none";
   timeInAt: string;
   timeOutAt: string;
   status: string;
@@ -258,6 +261,9 @@ type ManualAttendanceRow = {
   fullName: string;
   role: string;
   uniqueId: string;
+  shiftIn: string;
+  shiftOut: string;
+  timeInAt: string;
   attendance: "Present" | "Absent" | "Late";
   reason: string;
   attendanceLogId: string | null;
@@ -271,6 +277,8 @@ type ManualAttendanceEditState = {
   role: string;
   uniqueId: string;
   date: string;
+  shiftIn: string;
+  timeInAt: string;
   attendance: "Present" | "Absent" | "Late";
   reason: string;
 };
@@ -426,6 +434,7 @@ function AdminContent({
 
   const [shiftsSearch, setShiftsSearch] = useState("");
   const [shiftsRoleFilter, setShiftsRoleFilter] = useState("");
+  const [shiftsDate, setShiftsDate] = useState(() => todayInputValue());
   const [shiftsData, setShiftsData] = useState<ShiftRow[]>([]);
   const [shiftsBusy, setShiftsBusy] = useState(false);
   const [shiftsListPage, setShiftsListPage] = useState(1);
@@ -484,6 +493,7 @@ function AdminContent({
     setShiftsBusy(true);
     try {
       const query = new URLSearchParams();
+      if (shiftsDate) query.set("date", shiftsDate);
       if (shiftsSearch.trim()) query.set("search", shiftsSearch.trim());
       if (shiftsRoleFilter.trim()) query.set("role", shiftsRoleFilter.trim());
       const rows = await apiRequest<ShiftRow[]>(
@@ -561,6 +571,8 @@ function AdminContent({
       role: row.role,
       uniqueId: row.uniqueId,
       date: manualDate,
+      shiftIn: row.shiftIn,
+      timeInAt: row.timeInAt,
       attendance: row.attendance,
       reason: row.reason,
     });
@@ -700,7 +712,7 @@ function AdminContent({
       }`;
     } else if (target === "shifts") {
       count = shiftsData.length;
-      filterSummary = `Role: ${shiftsRoleFilter || "All roles"} | Search: ${
+      filterSummary = `Date: ${shiftsDate} | Role: ${shiftsRoleFilter || "All roles"} | Search: ${
         shiftsSearch.trim() || "none"
       }`;
     } else if (target === "attendance") {
@@ -780,6 +792,7 @@ function AdminContent({
         downloadCsvFile(
           "timing-shift.csv",
           [
+            "Date",
             "Name",
             "Role",
             "Gmail",
@@ -791,6 +804,7 @@ function AdminContent({
             "Status",
           ],
           shiftsData.map((row) => [
+            row.attendanceDate,
             row.fullName,
             row.role,
             row.email,
@@ -842,6 +856,8 @@ function AdminContent({
             "Gmail",
             "Role",
             "Unique ID",
+            "Shift In",
+            "Time In",
             "Attendance",
             "Reason",
             "Marked By Admin",
@@ -851,6 +867,8 @@ function AdminContent({
             row.email,
             row.role,
             row.uniqueId,
+            formatWallHm12h(row.shiftIn),
+            row.timeInAt,
             row.attendance,
             row.reason || "",
             row.markedByAdmin ? "Yes" : "No",
@@ -3195,13 +3213,21 @@ function AdminContent({
         ) : null}
 
         {view === "shifts" ? (
+          <>
           <section className="table-card user-generator-card">
             <div className="table-head">
-              <h2>Timing / Shift (Today)</h2>
-              <span>Schedule + marked attendance</span>
+              <h2>Timing / Shift</h2>
+              <span>Schedule + marked attendance for selected date</span>
             </div>
             <div className="user-generator-body">
               <section className="filters-bar compact-filters monthly-inline-filters">
+                <input
+                  type="date"
+                  value={shiftsDate}
+                  onChange={(event) => setShiftsDate(event.target.value)}
+                  className="overview-date-input-visible"
+                  aria-label="Shift date"
+                />
                 <input
                   value={shiftsSearch}
                   onChange={(event) => setShiftsSearch(event.target.value)}
@@ -3254,12 +3280,14 @@ function AdminContent({
                 <table>
                   <thead>
                     <tr>
+                      <th>Date</th>
                       <th>Name</th>
                       <th>Role</th>
                       <th>Gmail</th>
                       <th>Unique ID</th>
                       <th>Shift In</th>
                       <th>Shift Out</th>
+                      <th>Source</th>
                       <th>Time In</th>
                       <th>Time Out</th>
                       <th>Status</th>
@@ -3268,13 +3296,14 @@ function AdminContent({
                   <tbody>
                     {shiftsData.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="empty-row">
+                        <td colSpan={11} className="empty-row">
                           No shift records found.
                         </td>
                       </tr>
                     ) : (
                       shiftsPagedRows.map((row) => (
-                        <tr key={row.email}>
+                        <tr key={`${row.attendanceDate}-${row.email}`}>
+                          <td>{row.attendanceDate}</td>
                           <td>
                             <strong>{row.fullName}</strong>
                             <small>{row.uniqueId}</small>
@@ -3284,6 +3313,23 @@ function AdminContent({
                           <td>{row.uniqueId}</td>
                           <td>{formatWallHm12h(row.shiftStart)}</td>
                           <td>{formatWallHm12h(row.shiftEnd)}</td>
+                          <td>
+                            <span
+                              className={
+                                row.shiftSource === "override"
+                                  ? "badge indigo"
+                                  : row.shiftSource === "weekly"
+                                    ? "badge green"
+                                    : "badge amber"
+                              }
+                            >
+                              {row.shiftSource === "override"
+                                ? "Day override"
+                                : row.shiftSource === "weekly"
+                                  ? "Weekly"
+                                  : "None"}
+                            </span>
+                          </td>
                           <td>{row.timeInAt}</td>
                           <td>{row.timeOutAt}</td>
                           <td>
@@ -3344,6 +3390,11 @@ function AdminContent({
               ) : null}
             </div>
           </section>
+          <DayScheduleOverridePanel
+            roleFilterOptions={MANUAL_ROLE_FILTER_OPTIONS}
+            onChanged={() => void loadShifts()}
+          />
+          </>
         ) : null}
 
         {view === "attendance" ? (
@@ -3590,6 +3641,8 @@ function AdminContent({
                       <th>Name</th>
                       <th>Unique ID</th>
                       <th>Role</th>
+                      <th>Shift In</th>
+                      <th>Time In</th>
                       <th>Attendance</th>
                       <th>Reason</th>
                       <th>Marked By Admin</th>
@@ -3599,7 +3652,7 @@ function AdminContent({
                   <tbody>
                     {manualData.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="empty-row">
+                        <td colSpan={9} className="empty-row">
                           No users found.
                         </td>
                       </tr>
@@ -3612,6 +3665,8 @@ function AdminContent({
                           </td>
                           <td>{row.uniqueId}</td>
                           <td>{row.role}</td>
+                          <td>{formatWallHm12h(row.shiftIn)}</td>
+                          <td>{row.timeInAt}</td>
                           <td>
                             <span
                               className={
@@ -3740,10 +3795,18 @@ function AdminContent({
                       <dt>Role</dt>
                       <dd>{manualEditForm.role}</dd>
                     </div>
+                    <div>
+                      <dt>Shift In</dt>
+                      <dd>{formatWallHm12h(manualEditForm.shiftIn)}</dd>
+                    </div>
+                    <div>
+                      <dt>Time In</dt>
+                      <dd>{manualEditForm.timeInAt}</dd>
+                    </div>
                   </dl>
                   <div className="users-add-form detailed modal-edit-form">
                     <input
-                      className="search-input"
+                      className="overview-date-input-visible"
                       type="date"
                       value={manualEditForm.date}
                       disabled

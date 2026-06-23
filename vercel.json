@@ -12,6 +12,8 @@
     { "source": "/auth", "destination": "/api" },
     { "source": "/attendance/:path*", "destination": "/api" },
     { "source": "/attendance", "destination": "/api" },
+    { "source": "/admin/day-schedule-overrides/:path*", "destination": "/api" },
+    { "source": "/admin/day-schedule-overrides", "destination": "/api" },
     { "source": "/admin/:path*", "destination": "/api" },
     { "source": "/admin", "destination": "/api" },
     { "source": "/(.*)", "destination": "/index.html" }

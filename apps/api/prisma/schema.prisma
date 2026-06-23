@@ -8,16 +8,31 @@ datasource db {
 }
 
 model User {
-  id           String          @id @default(cuid())
-  email        String          @unique
-  passwordHash String
-  role         String
-  uniqueId     String?
-  fullName     String
-  isActive     Boolean         @default(true)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-  attendance   AttendanceLog[]
+  id                  String                @id @default(cuid())
+  email               String                @unique
+  passwordHash        String
+  role                String
+  uniqueId            String?
+  fullName            String
+  isActive            Boolean               @default(true)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  attendance          AttendanceLog[]
+  dayScheduleOverrides DayScheduleOverride[]
+}
+
+model DayScheduleOverride {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  overrideDate String   @db.VarChar(10)
+  startTime    String
+  endTime      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, overrideDate])
+  @@index([overrideDate])
 }
 
 model AttendanceLog {

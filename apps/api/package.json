@@ -7,7 +7,8 @@
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/src/index.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "rebuild-monthly": "tsx prisma/rebuild-monthly-tables.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.7.0",

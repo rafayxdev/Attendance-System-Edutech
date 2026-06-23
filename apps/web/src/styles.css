@@ -2417,3 +2417,128 @@ td code {
     padding: 14px;
   }
 }
+
+.day-override-card {
+  margin-top: 18px;
+}
+
+.day-override-form-grid {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.day-override-mode-fieldset {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+.day-override-mode-fieldset legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.radio-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.day-override-same-row {
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+}
+
+.day-override-user-picker {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.day-override-user-list {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 14px;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.day-override-user-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.day-override-user-item:hover {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.day-override-user-item span {
+  display: grid;
+  gap: 2px;
+}
+
+.day-override-user-item small {
+  color: #64748b;
+}
+
+.day-override-custom-table-wrap {
+  overflow: auto;
+}
+
+.day-override-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.day-override-divider {
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.35);
+  margin: 20px 0;
+}
+
+.day-override-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.muted-note {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.admin-portal input[type="date"],
+.admin-portal input[type="time"],
+.admin-dark-picker {
+  color-scheme: dark;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background:
+    linear-gradient(145deg, rgba(30, 41, 59, 0.78), rgba(15, 23, 42, 0.72));
+  color: #e5e7eb;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.admin-portal input[type="date"]:focus,
+.admin-portal input[type="time"]:focus,
+.admin-dark-picker:focus {
+  outline: none;
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.12);
+}
+
+.admin-portal input[type="date"]::-webkit-calendar-picker-indicator,
+.admin-portal input[type="time"]::-webkit-calendar-picker-indicator,
+.admin-dark-picker::-webkit-calendar-picker-indicator {
+  filter: invert(0.85);
+  cursor: pointer;
+}

@@ -4,6 +4,7 @@ import { authRouter } from "./routes/auth.js";
 import { attendanceRouter } from "./routes/attendance.js";
 import { adminRouter } from "./routes/admin.js";
 import { configRouter } from "./routes/config.js";
+import { dayScheduleOverridesRouter } from "./routes/day-schedule-overrides.js";
 
 function mapHandledDatabaseError(
   error: unknown,
@@ -87,6 +88,7 @@ export function createApp() {
   app.use("/auth", authRouter);
   app.use("/attendance", attendanceRouter);
   app.use("/admin", adminRouter);
+  app.use("/admin/day-schedule-overrides", dayScheduleOverridesRouter);
 
   app.use((_request, response) => {
     response.status(404).json({ message: "Route not found" });
