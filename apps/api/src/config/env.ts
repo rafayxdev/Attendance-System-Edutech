@@ -1,7 +1,11 @@
 import { config as loadEnv } from "dotenv";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const apiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 for (const envPath of [
+  resolve(apiRoot, ".env"),
   resolve(process.cwd(), "apps/api/.env"),
   resolve(process.cwd(), ".env"),
   resolve(process.cwd(), "../.env"),

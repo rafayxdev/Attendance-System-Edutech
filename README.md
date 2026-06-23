@@ -31,11 +31,17 @@ This repository contains the React + Node migration of the EduTech attendance sy
 
 ```bash
 npm install
+npm run dev
+```
+
+This starts both the API (`http://localhost:4000`) and the web app (`http://localhost:5173`) together.
+
+If you prefer separate terminals:
+
+```bash
 npm run dev:api
 npm run dev:web
 ```
-
-If you prefer to run both later, you can use separate terminals for the API and the web app.
 
 ## Database notes
 

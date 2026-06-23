@@ -283,6 +283,28 @@ type ManualAttendanceEditState = {
   reason: string;
 };
 
+type StudentDailyAttendanceRow = {
+  date: string;
+  shiftIn: string;
+  shiftOut: string;
+  timeIn: string;
+  timeOut: string;
+  status: "Present" | "Absent" | "Late" | "Not Marked";
+  markedBy: "Manual" | "Self" | "—";
+};
+
+type StudentDailyAttendanceResponse = {
+  user: {
+    id: string;
+    fullName: string;
+    email: string;
+    role: string;
+    uniqueId: string;
+  };
+  month: string;
+  rows: StudentDailyAttendanceRow[];
+};
+
 function todayInputValue(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -302,6 +324,25 @@ function getAttendanceStatusBadgeClass(status: string): string {
   if (status === "Late" || status === "Absent") return "badge red";
   if (status === "Present" || status === "On Time") return "badge green";
   return "badge green";
+}
+
+function getShiftStatusBadgeClass(status: string): string {
+  const lower = status.toLowerCase();
+  if (lower === "late" || lower === "absent") return "badge red";
+  if (lower === "present" || lower.includes("on time")) return "badge green";
+  if (lower.includes("checked")) return "badge indigo";
+  return "badge amber";
+}
+
+function formatDailyDateLabel(date: string): string {
+  const parsed = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 export function AdminPage({ onSessionChange }: AdminPageProps) {
@@ -451,6 +492,22 @@ function AdminContent({
   const [monthlyData, setMonthlyData] = useState<MonthlyAttendanceRow[]>([]);
   const [monthlyBusy, setMonthlyBusy] = useState(false);
   const [monthlyListPage, setMonthlyListPage] = useState(1);
+
+  const [dailyRoleFilter, setDailyRoleFilter] = useState("");
+  const [dailyName, setDailyName] = useState("");
+  const [dailyUniqueId, setDailyUniqueId] = useState("");
+  const [dailyMonth, setDailyMonth] = useState(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [dailyData, setDailyData] = useState<StudentDailyAttendanceRow[]>([]);
+  const [dailyUserLabel, setDailyUserLabel] = useState("");
+  const [dailyBusy, setDailyBusy] = useState(false);
+  const [dailyMessage, setDailyMessage] = useState("");
+  const [dailyMessageIsError, setDailyMessageIsError] = useState(false);
+
   const [pendingUsersListPage, setPendingUsersListPage] = useState(1);
 
   const [manualDate, setManualDate] = useState(() => todayInputValue());
@@ -479,6 +536,7 @@ function AdminContent({
     clearAfter(setAddUserMessage, addUserMessage);
     clearAfter(setDetailModalMessage, detailModalMessage);
     clearAfter(setPasswordMessage, passwordMessage);
+    clearAfter(setDailyMessage, dailyMessage);
 
     return () => timers.forEach((t) => clearTimeout(t));
   }, [
@@ -487,6 +545,7 @@ function AdminContent({
     addUserMessage,
     detailModalMessage,
     passwordMessage,
+    dailyMessage,
   ]);
 
   async function loadShifts() {
@@ -537,8 +596,52 @@ function AdminContent({
         const first = months[0];
         if (first !== undefined) setMonthlyMonth(first);
       }
+      if (months.length > 0 && !months.includes(dailyMonth)) {
+        const first = months[0];
+        if (first !== undefined) setDailyMonth(first);
+      }
     } catch (error) {
       console.error(error);
+    }
+  }
+
+  async function loadStudentDailyAttendance() {
+    if (!dailyName.trim() && !dailyUniqueId.trim()) {
+      setDailyMessageIsError(true);
+      setDailyMessage("Enter a name or unique ID to load daily attendance.");
+      return;
+    }
+
+    setDailyBusy(true);
+    setDailyMessage("");
+    try {
+      const query = new URLSearchParams();
+      query.set("month", dailyMonth);
+      if (dailyRoleFilter.trim()) query.set("role", dailyRoleFilter.trim());
+      if (dailyName.trim()) query.set("name", dailyName.trim());
+      if (dailyUniqueId.trim()) query.set("uniqueId", dailyUniqueId.trim());
+      const payload = await apiRequest<StudentDailyAttendanceResponse>(
+        `/admin/student-daily-attendance?${query.toString()}`,
+      );
+      setDailyData(payload.rows);
+      setDailyUserLabel(
+        `${payload.user.fullName} · ${payload.user.role} · ${payload.user.uniqueId}`,
+      );
+      setDailyMessageIsError(false);
+      setDailyMessage(
+        `Loaded ${payload.rows.length} weekday record(s) for ${payload.month}.`,
+      );
+    } catch (error) {
+      setDailyData([]);
+      setDailyUserLabel("");
+      setDailyMessageIsError(true);
+      setDailyMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to load student daily attendance.",
+      );
+    } finally {
+      setDailyBusy(false);
     }
   }
 
@@ -3334,17 +3437,7 @@ function AdminContent({
                           <td>{row.timeOutAt}</td>
                           <td>
                             <span
-                              className={
-                                row.status.toLowerCase().includes("late")
-                                  ? "badge red"
-                                  : row.status.toLowerCase().includes("checked")
-                                    ? "badge indigo"
-                                    : row.status
-                                          .toLowerCase()
-                                          .includes("on time")
-                                      ? "badge green"
-                                      : "badge amber"
-                              }
+                              className={getShiftStatusBadgeClass(row.status)}
                             >
                               {row.status}
                             </span>
@@ -3398,6 +3491,7 @@ function AdminContent({
         ) : null}
 
         {view === "attendance" ? (
+          <>
           <section className="table-card user-generator-card">
             <div className="table-head">
               <h2>Monthly Attendance</h2>
@@ -3558,10 +3652,138 @@ function AdminContent({
                 </div>
               ) : null}
               <div className="notice info">
-                3 Late days are counted as 1 Absent day in Effective totals.
+                Absent counts only days explicitly marked Absent. 3 Late days
+                are counted as 1 Absent day in Effective totals.
               </div>
             </div>
           </section>
+
+          <section className="table-card user-generator-card">
+            <div className="table-head">
+              <h2>Check Student Daily Attendance</h2>
+              <span>{dailyUserLabel || dailyMonth}</span>
+            </div>
+            <div className="user-generator-body">
+              <section className="filters-bar compact-filters">
+                <select
+                  value={dailyRoleFilter}
+                  onChange={(event) => setDailyRoleFilter(event.target.value)}
+                  className="search-input"
+                  aria-label="Filter daily attendance by role"
+                >
+                  {OVERVIEW_ROLE_FILTER_OPTIONS.map((opt) => (
+                    <option
+                      key={`daily-${opt.value || "all"}`}
+                      value={opt.value}
+                    >
+                      {opt.value === "" ? "All roles" : opt.label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  value={dailyName}
+                  onChange={(event) => setDailyName(event.target.value)}
+                  placeholder="Name"
+                  className="search-input"
+                  aria-label="Student name"
+                />
+                <input
+                  value={dailyUniqueId}
+                  onChange={(event) => setDailyUniqueId(event.target.value)}
+                  placeholder="Unique ID"
+                  className="search-input"
+                  aria-label="Student unique ID"
+                />
+                <select
+                  value={dailyMonth}
+                  onChange={(event) => setDailyMonth(event.target.value)}
+                  className="date-input"
+                  aria-label="Daily attendance month"
+                >
+                  {monthlyMonths.length === 0 ? (
+                    <option value={dailyMonth}>{dailyMonth}</option>
+                  ) : (
+                    monthlyMonths.map((month) => (
+                      <option key={`daily-month-${month}`} value={month}>
+                        {month}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  className="primary-btn slim overview-search-submit"
+                  onClick={() => void loadStudentDailyAttendance()}
+                  disabled={dailyBusy}
+                >
+                  {dailyBusy ? (
+                    <span className="search-btn-content">
+                      <span
+                        className="refresh-btn-spinner"
+                        aria-hidden="true"
+                      />
+                      Loading…
+                    </span>
+                  ) : (
+                    "Load daily attendance"
+                  )}
+                </button>
+              </section>
+
+              {dailyMessage ? (
+                <p
+                  className={`notice ${dailyMessageIsError ? "error" : "success"}`}
+                  role="status"
+                >
+                  {dailyMessage}
+                </p>
+              ) : null}
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Shift In</th>
+                      <th>Shift Out</th>
+                      <th>Time In</th>
+                      <th>Time Out</th>
+                      <th>Status</th>
+                      <th>Marked By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyData.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="empty-row">
+                          Select a user and month, then load daily attendance.
+                        </td>
+                      </tr>
+                    ) : (
+                      dailyData.map((row) => (
+                        <tr key={row.date}>
+                          <td>{formatDailyDateLabel(row.date)}</td>
+                          <td>{formatWallHm12h(row.shiftIn)}</td>
+                          <td>{formatWallHm12h(row.shiftOut)}</td>
+                          <td>{row.timeIn}</td>
+                          <td>{row.timeOut}</td>
+                          <td>
+                            <span
+                              className={getShiftStatusBadgeClass(row.status)}
+                            >
+                              {row.status}
+                            </span>
+                          </td>
+                          <td>{row.markedBy}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+          </>
         ) : null}
 
         {view === "manual-attendance" ? (

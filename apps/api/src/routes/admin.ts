@@ -14,6 +14,7 @@ import {
 } from "../lib/rules.js";
 import { getEffectiveDaySchedule } from "../lib/schedules.js";
 import {
+  dayCountsAsExplicitAbsent,
   dayCountsAsLate,
   dayCountsAsPresent,
   resolveDisplayAttendanceStatus,
@@ -334,12 +335,14 @@ async function rebuildMonthlySummaryForUser(params: {
     );
   }
 
-  const summaryDays = Array.from(byDay.values()).filter(dayCountsAsPresent);
+  const dayStates = Array.from(byDay.values());
+  const summaryDays = dayStates.filter(dayCountsAsPresent);
   const presentDays = summaryDays.length;
   const lateDays = summaryDays.filter(dayCountsAsLate).length;
+  const absentDays = dayStates.filter(dayCountsAsExplicitAbsent).length;
   const table = monthlyTableName(monthLabel);
 
-  if (presentDays <= 0) {
+  if (presentDays <= 0 && absentDays <= 0 && lateDays <= 0) {
     await prisma.$executeRawUnsafe(
       `DELETE FROM "${table}" WHERE user_id = $1`,
       user.id,
@@ -349,8 +352,8 @@ async function rebuildMonthlySummaryForUser(params: {
 
   await prisma.$executeRawUnsafe(
     `
-    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, late_days, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, absent_days, late_days, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
     ON CONFLICT (user_id) DO UPDATE SET
       email = EXCLUDED.email,
       full_name = EXCLUDED.full_name,
@@ -358,6 +361,7 @@ async function rebuildMonthlySummaryForUser(params: {
       unique_id = EXCLUDED.unique_id,
       total_weekdays = EXCLUDED.total_weekdays,
       present_days = EXCLUDED.present_days,
+      absent_days = EXCLUDED.absent_days,
       late_days = EXCLUDED.late_days,
       updated_at = NOW();
     `,
@@ -368,6 +372,7 @@ async function rebuildMonthlySummaryForUser(params: {
     user.uniqueId,
     totalWeekdays,
     presentDays,
+    absentDays,
     lateDays,
   );
 }
@@ -1466,27 +1471,25 @@ adminRouter.get(
       },
       orderBy: { createdAt: "asc" },
     });
-    const timeInByUserId = new Map<string, Date>();
-    const timeOutByUserId = new Map<string, Date>();
-    const statusByUserId = new Map<string, string>();
+    const logsByUserId = new Map<
+      string,
+      Array<{ attendanceType: string; status: string; createdAt: Date }>
+    >();
     for (const log of dayLogs) {
       if (!log.userId) continue;
-      if (log.attendanceType === "Time In" && !timeInByUserId.has(log.userId)) {
-        timeInByUserId.set(log.userId, log.createdAt);
-        statusByUserId.set(log.userId, log.status);
-      }
-      if (
-        log.attendanceType === "Time Out" &&
-        !timeOutByUserId.has(log.userId)
-      ) {
-        timeOutByUserId.set(log.userId, log.createdAt);
-      }
+      const existing = logsByUserId.get(log.userId) ?? [];
+      existing.push({
+        attendanceType: log.attendanceType,
+        status: log.status,
+        createdAt: log.createdAt,
+      });
+      logsByUserId.set(log.userId, existing);
     }
 
     const rows = users.map((user) => {
       const schedule = scheduleByEmail.get(user.email.toLowerCase()) ?? [];
       const dayOverride = overrideByUserId.get(user.id) ?? null;
-      const weeklySlot =
+      const weeklySlot: SchedulePayload["schedule"][number] | null =
         weekday === "sat" || weekday === "sun"
           ? null
           : (schedule.find((s) => s.day === weekday) ?? null);
@@ -1496,13 +1499,30 @@ adminRouter.get(
         : weeklySlot
           ? "weekly"
           : "none";
-      const timeIn = timeInByUserId.get(user.id) ?? null;
-      const timeOut = timeOutByUserId.get(user.id) ?? null;
-      const timeInStatus = statusByUserId.get(user.id) ?? null;
+
+      const userLogs = logsByUserId.get(user.id) ?? [];
+      const state = summarizeAttendanceDayState(
+        userLogs.map((log) => ({
+          attendanceType: log.attendanceType,
+          status: log.status,
+        })),
+      );
+
+      const timeInLog = userLogs.find((log) => log.attendanceType === "Time In");
+      const timeOutLog = userLogs.find(
+        (log) => log.attendanceType === "Time Out",
+      );
+      const timeIn = timeInLog?.createdAt ?? null;
+      const timeOut = timeOutLog?.createdAt ?? null;
 
       let attendanceStatus: string = "Not marked";
-      if (timeIn && !timeOut) attendanceStatus = timeInStatus ?? "Time In";
-      if (timeIn && timeOut) attendanceStatus = "Checked out";
+      if (state.manualStatus) {
+        attendanceStatus = resolveDisplayAttendanceStatus(state);
+      } else if (timeIn && !timeOut) {
+        attendanceStatus = timeInLog?.status ?? "Time In";
+      } else if (timeIn && timeOut) {
+        attendanceStatus = "Checked out";
+      }
 
       return {
         attendanceDate: dayKey,
@@ -1513,13 +1533,229 @@ adminRouter.get(
         shiftStart: activeSlot?.startTime ?? "N/A",
         shiftEnd: activeSlot?.endTime ?? "N/A",
         shiftSource,
-        timeInAt: timeIn ? formatDisplayDateTime(timeIn).time : "—",
-        timeOutAt: timeOut ? formatDisplayDateTime(timeOut).time : "—",
+        timeInAt: state.manualStatus
+          ? "—"
+          : timeIn
+            ? formatDisplayDateTime(timeIn).time
+            : "—",
+        timeOutAt: state.manualStatus
+          ? "—"
+          : timeOut
+            ? formatDisplayDateTime(timeOut).time
+            : "—",
         status: attendanceStatus,
       };
     });
 
     response.json(rows);
+  },
+);
+
+adminRouter.get(
+  "/student-daily-attendance",
+  async (request: AuthenticatedRequest, response) => {
+    const monthParam = parseMonthParam(
+      request.query.month as string | undefined,
+    );
+    if (!monthParam) {
+      response.status(400).json({ message: "Invalid month. Use YYYY-MM." });
+      return;
+    }
+
+    const role = String(request.query.role ?? "").trim();
+    const name = String(request.query.name ?? "").trim();
+    const uniqueId = String(request.query.uniqueId ?? "").trim();
+
+    if (!name && !uniqueId) {
+      response
+        .status(400)
+        .json({ message: "Provide a name or unique ID to select a user." });
+      return;
+    }
+
+    const users = await prisma.user.findMany({
+      where: {
+        NOT: { role: { equals: "admin", mode: "insensitive" } },
+        ...(role ? { role: { equals: role, mode: "insensitive" } } : {}),
+        ...(uniqueId
+          ? { uniqueId: { equals: uniqueId, mode: "insensitive" } }
+          : {}),
+        ...(name
+          ? {
+              OR: [
+                { fullName: { contains: name, mode: "insensitive" } },
+                { email: { contains: name, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: { fullName: "asc" },
+      take: 10,
+    });
+
+    if (users.length === 0) {
+      response.status(404).json({ message: "No matching user found." });
+      return;
+    }
+    if (users.length > 1) {
+      response.status(409).json({
+        message:
+          "Multiple users match these filters. Refine name or use Unique ID.",
+      });
+      return;
+    }
+
+    const user = users[0];
+    if (!user) {
+      response.status(404).json({ message: "No matching user found." });
+      return;
+    }
+
+    const tz = "Asia/Karachi";
+    const defaultSchedule: SchedulePayload["schedule"] = [
+      { day: "mon", startTime: "09:00", endTime: "17:00" },
+      { day: "tue", startTime: "09:00", endTime: "17:00" },
+      { day: "wed", startTime: "09:00", endTime: "17:00" },
+      { day: "thu", startTime: "09:00", endTime: "17:00" },
+      { day: "fri", startTime: "09:00", endTime: "17:00" },
+    ];
+    const scheduleLogs = await prisma.auditLog.findMany({
+      where: { action: scheduleAuditAction },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+    });
+    const schedule: SchedulePayload["schedule"] =
+      scheduleLogs
+        .map((log) => parseSchedulePayload(log.payload))
+        .find(
+          (payload) =>
+            payload?.email === user.email.trim().toLowerCase(),
+        )?.schedule ?? defaultSchedule;
+
+    const scheduleDays = new Set(schedule.map((slot) => slot.day));
+
+    const monthDays = listMonthDayKeys({
+      year: monthParam.year,
+      month: monthParam.month,
+      timeZone: tz,
+    }).filter((day) => scheduleDays.has(day.weekday));
+
+    const monthStart = `${monthParam.label}-01`;
+    const monthEndExclusive = formatDayKey(
+      new Date(Date.UTC(monthParam.year, monthParam.month, 1, 0, 0, 0)),
+    );
+
+    const monthLogs = await prisma.attendanceLog.findMany({
+      where: {
+        userId: user.id,
+        attendanceDay: { gte: monthStart, lt: monthEndExclusive },
+        attendanceType: { in: ["Time In", "Time Out", "Manual Attendance"] },
+      },
+      select: {
+        attendanceDay: true,
+        attendanceType: true,
+        status: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const logsByDay = new Map<
+      string,
+      Array<{
+        attendanceType: string;
+        status: string;
+        createdAt: Date;
+      }>
+    >();
+    for (const log of monthLogs) {
+      const existing = logsByDay.get(log.attendanceDay) ?? [];
+      existing.push({
+        attendanceType: log.attendanceType,
+        status: log.status,
+        createdAt: log.createdAt,
+      });
+      logsByDay.set(log.attendanceDay, existing);
+    }
+
+    const overrides = await prisma.dayScheduleOverride.findMany({
+      where: {
+        userId: user.id,
+        overrideDate: { in: monthDays.map((day) => day.dayKey) },
+      },
+      select: { overrideDate: true, startTime: true, endTime: true },
+    });
+    const overrideByDate = new Map(
+      overrides.map((row) => [row.overrideDate, row]),
+    );
+
+    const weeklyByDay = new Map(
+      schedule.map((slot) => [slot.day, slot]),
+    );
+
+    const rows = monthDays.map((day) => {
+        const dayLogs = logsByDay.get(day.dayKey) ?? [];
+        const state = summarizeAttendanceDayState(
+          dayLogs.map((log) => ({
+            attendanceType: log.attendanceType,
+            status: log.status,
+          })),
+        );
+
+        const dayOverride = overrideByDate.get(day.dayKey) ?? null;
+        const weeklySlot: SchedulePayload["schedule"][number] | null =
+          day.weekday === "sat" || day.weekday === "sun"
+            ? null
+            : (weeklyByDay.get(day.weekday) ?? null);
+        const activeSlot = dayOverride ?? weeklySlot;
+
+        const timeInLog = dayLogs.find((log) => log.attendanceType === "Time In");
+        const timeOutLog = dayLogs.find(
+          (log) => log.attendanceType === "Time Out",
+        );
+
+        let status: "Present" | "Absent" | "Late" | "Not Marked" = "Not Marked";
+        if (state.manualStatus || state.hasTimeIn || state.hasTimeOut) {
+          status = resolveDisplayAttendanceStatus(state);
+        }
+
+        let markedBy: "Manual" | "Self" | "—" = "—";
+        if (state.manualStatus) {
+          markedBy = "Manual";
+        } else if (state.hasTimeIn || state.hasTimeOut) {
+          markedBy = "Self";
+        }
+
+        return {
+          date: day.dayKey,
+          shiftIn: activeSlot?.startTime ?? "N/A",
+          shiftOut: activeSlot?.endTime ?? "N/A",
+          timeIn: state.manualStatus
+            ? "—"
+            : timeInLog
+              ? formatDisplayDateTime(timeInLog.createdAt).time
+              : "—",
+          timeOut: state.manualStatus
+            ? "—"
+            : timeOutLog
+              ? formatDisplayDateTime(timeOutLog.createdAt).time
+              : "—",
+          status,
+          markedBy,
+        };
+      });
+
+    response.json({
+      user: {
+        id: user.id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        uniqueId: user.uniqueId ?? "N/A",
+      },
+      month: monthParam.label,
+      rows,
+    });
   },
 );
 
@@ -1568,11 +1804,11 @@ adminRouter.get(
         unique_id AS "uniqueId",
         total_weekdays AS "totalWeekdays",
         present_days AS "presentDays",
-        GREATEST(0, total_weekdays - present_days) AS "absentDays",
+        GREATEST(0, COALESCE(absent_days, 0)) AS "absentDays",
         late_days AS "lateDays",
         FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
         GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
-        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+        GREATEST(0, COALESCE(absent_days, 0)) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
       WHERE ($2 = '' OR email ILIKE '%' || $2 || '%' OR full_name ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR COALESCE(unique_id,'') ILIKE '%' || $2 || '%')
         AND ($3 = '' OR LOWER(role) = LOWER($3))
@@ -1653,11 +1889,11 @@ adminRouter.get(
         unique_id AS "uniqueId",
         total_weekdays AS "totalWeekdays",
         present_days AS "presentDays",
-        GREATEST(0, total_weekdays - present_days) AS "absentDays",
+        GREATEST(0, COALESCE(absent_days, 0)) AS "absentDays",
         late_days AS "lateDays",
         FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
         GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
-        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+        GREATEST(0, COALESCE(absent_days, 0)) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
       WHERE ($2 = '' OR LOWER(role) = LOWER($2))
       ORDER BY full_name ASC

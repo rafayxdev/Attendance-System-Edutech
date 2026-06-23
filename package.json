@@ -5,9 +5,12 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
+    "postinstall": "node scripts/prisma-generate.mjs",
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev -w @edutech/api",
     "dev:web": "npm run dev -w @edutech/web",
+    "prisma:generate": "node scripts/prisma-generate.mjs",
+    "prisma:generate:force": "node scripts/prisma-generate.mjs --force",
     "build": "npm run build -w @edutech/api && npm run build -w @edutech/web",
     "lint": "npm run lint -w @edutech/api && npm run lint -w @edutech/web"
   },

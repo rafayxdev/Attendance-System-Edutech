@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../api/client";
+import { ConfirmModal } from "./ConfirmModal";
 import { formatWallHm12h } from "../lib/timeDisplay";
 
 type OverrideMode = "same" | "custom";
+type DateScope = "single" | "range";
 
 export type DayOverrideRow = {
   id: string;
@@ -34,6 +36,10 @@ type UserDataApiRow = {
 
 type RoleFilterOption = { value: string; label: string };
 
+type DeleteConfirmState = {
+  row: DayOverrideRow;
+};
+
 interface DayScheduleOverridePanelProps {
   roleFilterOptions: RoleFilterOption[];
   onChanged?: () => void;
@@ -58,6 +64,23 @@ function formatOverrideDateLabel(date: string): string {
   });
 }
 
+function enumerateDatesInclusive(start: string, end: string): string[] {
+  const dates: string[] = [];
+  const cursor = new Date(`${start}T12:00:00`);
+  const last = new Date(`${end}T12:00:00`);
+  if (Number.isNaN(cursor.getTime()) || Number.isNaN(last.getTime())) return dates;
+  if (cursor > last) return dates;
+
+  while (cursor <= last) {
+    const year = cursor.getFullYear();
+    const month = String(cursor.getMonth() + 1).padStart(2, "0");
+    const day = String(cursor.getDate()).padStart(2, "0");
+    dates.push(`${year}-${month}-${day}`);
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return dates;
+}
+
 export function DayScheduleOverridePanel({
   roleFilterOptions,
   onChanged,
@@ -67,8 +90,10 @@ export function DayScheduleOverridePanel({
   const [userPickerSearch, setUserPickerSearch] = useState("");
   const [userPickerRole, setUserPickerRole] = useState("");
 
+  const [dateScope, setDateScope] = useState<DateScope | "">("");
   const [formDate, setFormDate] = useState(todayDateInputValue());
-  const [mode, setMode] = useState<OverrideMode>("same");
+  const [formEndDate, setFormEndDate] = useState(todayDateInputValue());
+  const [mode, setMode] = useState<OverrideMode | "">("");
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [sameStartTime, setSameStartTime] = useState("09:00");
   const [sameEndTime, setSameEndTime] = useState("17:00");
@@ -76,7 +101,8 @@ export function DayScheduleOverridePanel({
     Record<string, { startTime: string; endTime: string }>
   >({});
 
-  const [listDate, setListDate] = useState(todayDateInputValue());
+  const [overrideDates, setOverrideDates] = useState<string[]>([]);
+  const [listDate, setListDate] = useState("");
   const [listSearch, setListSearch] = useState("");
   const [listRole, setListRole] = useState("");
   const [overrides, setOverrides] = useState<DayOverrideRow[]>([]);
@@ -89,6 +115,11 @@ export function DayScheduleOverridePanel({
   const [editStartTime, setEditStartTime] = useState("09:00");
   const [editEndTime, setEditEndTime] = useState("17:00");
   const [editBusy, setEditBusy] = useState(false);
+
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState | null>(
+    null,
+  );
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     if (!message) return;
@@ -120,11 +151,31 @@ export function DayScheduleOverridePanel({
     }
   }
 
-  async function loadOverrides() {
+  async function loadOverrideDates() {
+    try {
+      const dates = await apiRequest<string[]>(
+        "/admin/day-schedule-overrides/dates",
+      );
+      setOverrideDates(dates);
+      if (dates.length > 0 && !listDate) {
+        setListDate(dates[0] ?? "");
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  async function loadOverrides(dateOverride?: string) {
+    const activeDate = dateOverride ?? listDate;
+    if (!activeDate) {
+      setOverrides([]);
+      return;
+    }
+
     setListBusy(true);
     try {
       const query = new URLSearchParams();
-      if (listDate) query.set("date", listDate);
+      query.set("date", activeDate);
       if (listSearch.trim()) query.set("search", listSearch.trim());
       if (listRole.trim()) query.set("role", listRole.trim());
       const rows = await apiRequest<DayOverrideRow[]>(
@@ -142,8 +193,14 @@ export function DayScheduleOverridePanel({
 
   useEffect(() => {
     void loadUsers();
-    void loadOverrides();
+    void loadOverrideDates();
   }, []);
+
+  useEffect(() => {
+    if (listDate) {
+      void loadOverrides(listDate);
+    }
+  }, [listDate]);
 
   const filteredPickerUsers = useMemo(() => {
     const search = userPickerSearch.trim().toLowerCase();
@@ -168,6 +225,8 @@ export function DayScheduleOverridePanel({
     () => users.filter((user) => selectedUserIds.includes(user.id)),
     [users, selectedUserIds],
   );
+
+  const showTimingFields = dateScope !== "" && mode !== "";
 
   function toggleUserSelection(userId: string) {
     setSelectedUserIds((prev) => {
@@ -205,10 +264,65 @@ export function DayScheduleOverridePanel({
     setSelectedUserIds([]);
   }
 
+  function resolveTargetDates(): string[] {
+    if (dateScope === "single") {
+      return formDate ? [formDate] : [];
+    }
+    if (dateScope === "range") {
+      return enumerateDatesInclusive(formDate, formEndDate);
+    }
+    return [];
+  }
+
+  async function saveOverrideForDate(date: string) {
+    if (mode === "same") {
+      await apiRequest("/admin/day-schedule-overrides", {
+        method: "POST",
+        body: JSON.stringify({
+          date,
+          mode: "same",
+          userIds: selectedUserIds,
+          startTime: sameStartTime,
+          endTime: sameEndTime,
+        }),
+      });
+      return;
+    }
+
+    await apiRequest("/admin/day-schedule-overrides", {
+      method: "POST",
+      body: JSON.stringify({
+        date,
+        mode: "custom",
+        entries: selectedUserIds.map((userId) => ({
+          userId,
+          startTime: customTimings[userId]?.startTime ?? sameStartTime,
+          endTime: customTimings[userId]?.endTime ?? sameEndTime,
+        })),
+      }),
+    });
+  }
+
   async function handleSaveOverride() {
-    if (!formDate) {
+    if (!dateScope) {
       setMessageIsError(true);
-      setMessage("Select a date for the override.");
+      setMessage("Step 1: Select Specific day or Range.");
+      return;
+    }
+    if (!mode) {
+      setMessageIsError(true);
+      setMessage("Step 2: Select Same timing or Custom timing per user.");
+      return;
+    }
+
+    const targetDates = resolveTargetDates();
+    if (targetDates.length === 0) {
+      setMessageIsError(true);
+      setMessage(
+        dateScope === "range"
+          ? "Select a valid date range (start on or before end)."
+          : "Select a date for the override.",
+      );
       return;
     }
     if (selectedUserIds.length === 0) {
@@ -220,38 +334,23 @@ export function DayScheduleOverridePanel({
     setSaveBusy(true);
     setMessage("");
     try {
-      if (mode === "same") {
-        await apiRequest("/admin/day-schedule-overrides", {
-          method: "POST",
-          body: JSON.stringify({
-            date: formDate,
-            mode: "same",
-            userIds: selectedUserIds,
-            startTime: sameStartTime,
-            endTime: sameEndTime,
-          }),
-        });
-      } else {
-        await apiRequest("/admin/day-schedule-overrides", {
-          method: "POST",
-          body: JSON.stringify({
-            date: formDate,
-            mode: "custom",
-            entries: selectedUserIds.map((userId) => ({
-              userId,
-              startTime: customTimings[userId]?.startTime ?? sameStartTime,
-              endTime: customTimings[userId]?.endTime ?? sameEndTime,
-            })),
-          }),
-        });
+      for (const date of targetDates) {
+        await saveOverrideForDate(date);
       }
 
       setMessageIsError(false);
+      const dateLabel =
+        targetDates.length === 1
+          ? formatOverrideDateLabel(targetDates[0] ?? formDate)
+          : `${formatOverrideDateLabel(targetDates[0] ?? formDate)} – ${formatOverrideDateLabel(targetDates[targetDates.length - 1] ?? formEndDate)} (${targetDates.length} days)`;
       setMessage(
-        `Override saved for ${selectedUserIds.length} user(s) on ${formatOverrideDateLabel(formDate)}.`,
+        `Override saved for ${selectedUserIds.length} user(s) on ${dateLabel}.`,
       );
-      setListDate(formDate);
-      await loadOverrides();
+
+      await loadOverrideDates();
+      const refreshDate = targetDates[targetDates.length - 1] ?? formDate;
+      setListDate(refreshDate);
+      await loadOverrides(refreshDate);
       onChanged?.();
     } catch (error) {
       setMessageIsError(true);
@@ -301,12 +400,10 @@ export function DayScheduleOverridePanel({
     }
   }
 
-  async function handleDeleteOverride(row: DayOverrideRow) {
-    const confirmed = window.confirm(
-      `Remove override for ${row.fullName} on ${formatOverrideDateLabel(row.overrideDate)}?`,
-    );
-    if (!confirmed) return;
-
+  async function confirmDeleteOverride() {
+    if (!deleteConfirm) return;
+    const row = deleteConfirm.row;
+    setDeleteBusy(true);
     try {
       const result = await apiRequest<{ message: string }>(
         `/admin/day-schedule-overrides/${row.id}`,
@@ -315,13 +412,17 @@ export function DayScheduleOverridePanel({
       setMessageIsError(false);
       setMessage(result.message);
       if (editingId === row.id) setEditingId(null);
+      await loadOverrideDates();
       await loadOverrides();
       onChanged?.();
+      setDeleteConfirm(null);
     } catch (error) {
       setMessageIsError(true);
       setMessage(
         error instanceof Error ? error.message : "Unable to delete override.",
       );
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -329,7 +430,9 @@ export function DayScheduleOverridePanel({
     const rowsForDate = overrides.filter((row) => row.overrideDate === date);
     if (rowsForDate.length === 0) return;
 
+    setDateScope("single");
     setFormDate(date);
+    setFormEndDate(date);
     setSelectedUserIds(rowsForDate.map((row) => row.userId));
 
     const first = rowsForDate[0];
@@ -376,39 +479,94 @@ export function DayScheduleOverridePanel({
         ) : null}
 
         <div className="day-override-form-grid">
-          <label className="field-block">
-            <span>Override date</span>
-            <input
-              type="date"
-              className="overview-date-input-visible admin-dark-picker"
-              value={formDate}
-              onChange={(event) => setFormDate(event.target.value)}
-            />
-          </label>
-
           <fieldset className="day-override-mode-fieldset">
-            <legend>Timing mode</legend>
+            <legend>Step 1 — Date scope</legend>
             <label className="radio-inline">
               <input
                 type="radio"
-                name="override-mode"
-                checked={mode === "same"}
-                onChange={() => setMode("same")}
+                name="override-date-scope"
+                checked={dateScope === "single"}
+                onChange={() => {
+                  setDateScope("single");
+                  setMode("");
+                }}
               />
-              Same timing for selected users
+              Specific day
             </label>
             <label className="radio-inline">
               <input
                 type="radio"
-                name="override-mode"
-                checked={mode === "custom"}
-                onChange={() => setMode("custom")}
+                name="override-date-scope"
+                checked={dateScope === "range"}
+                onChange={() => {
+                  setDateScope("range");
+                  setMode("");
+                }}
               />
-              Custom timing per user
+              Range
             </label>
           </fieldset>
 
-          {mode === "same" ? (
+          {dateScope === "single" ? (
+            <label className="field-block">
+              <span>Override date</span>
+              <input
+                type="date"
+                className="overview-date-input-visible admin-dark-picker"
+                value={formDate}
+                onChange={(event) => setFormDate(event.target.value)}
+              />
+            </label>
+          ) : null}
+
+          {dateScope === "range" ? (
+            <div className="schedule-row day-override-same-row">
+              <label>
+                <span>Range start</span>
+                <input
+                  type="date"
+                  className="overview-date-input-visible admin-dark-picker"
+                  value={formDate}
+                  onChange={(event) => setFormDate(event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Range end</span>
+                <input
+                  type="date"
+                  className="overview-date-input-visible admin-dark-picker"
+                  value={formEndDate}
+                  onChange={(event) => setFormEndDate(event.target.value)}
+                />
+              </label>
+            </div>
+          ) : null}
+
+          {dateScope !== "" ? (
+            <fieldset className="day-override-mode-fieldset">
+              <legend>Step 2 — Timing mode</legend>
+              <label className="radio-inline">
+                <input
+                  type="radio"
+                  name="override-mode"
+                  checked={mode === "same"}
+                  onChange={() => setMode("same")}
+                />
+                Same timing per users
+              </label>
+              <label className="radio-inline">
+                <input
+                  type="radio"
+                  name="override-mode"
+                  checked={mode === "custom"}
+                  onChange={() => setMode("custom")}
+                />
+                Custom timing per user
+              </label>
+            </fieldset>
+          ) : null}
+
+          {showTimingFields && mode === "same" ? (
             <div className="schedule-row day-override-same-row">
               <label>
                 <span>Shift In (Time In start)</span>
@@ -432,152 +590,158 @@ export function DayScheduleOverridePanel({
           ) : null}
         </div>
 
-        <div className="day-override-user-picker">
-          <div className="schedule-head">
-            <strong>Select users</strong>
-            <div className="schedule-head-actions">
-              <button
-                type="button"
-                className="ghost-btn slim"
-                onClick={() => selectAllVisibleUsers()}
-                disabled={usersBusy || filteredPickerUsers.length === 0}
-              >
-                Select visible
-              </button>
-              <button
-                type="button"
-                className="ghost-btn slim"
-                onClick={clearUserSelection}
-                disabled={selectedUserIds.length === 0}
-              >
-                Clear
-              </button>
+        {showTimingFields ? (
+          <div className="day-override-user-picker">
+            <div className="schedule-head">
+              <strong>Select users</strong>
+              <div className="schedule-head-actions">
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={() => selectAllVisibleUsers()}
+                  disabled={usersBusy || filteredPickerUsers.length === 0}
+                >
+                  Select visible
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn slim"
+                  onClick={clearUserSelection}
+                  disabled={selectedUserIds.length === 0}
+                >
+                  Clear
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div className="filters-bar compact-filters">
-            <input
-              value={userPickerSearch}
-              onChange={(event) => setUserPickerSearch(event.target.value)}
-              placeholder="Search users"
-              className="search-input"
-            />
-            <select
-              value={userPickerRole}
-              onChange={(event) => setUserPickerRole(event.target.value)}
-              className="search-input"
-              aria-label="Filter users by role"
-            >
-              {roleFilterOptions.map((opt) => (
-                <option key={`override-pick-${opt.value || "all"}`} value={opt.value}>
-                  {opt.value === "" ? "All roles" : opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div className="filters-bar compact-filters">
+              <input
+                value={userPickerSearch}
+                onChange={(event) => setUserPickerSearch(event.target.value)}
+                placeholder="Search users"
+                className="search-input"
+              />
+              <select
+                value={userPickerRole}
+                onChange={(event) => setUserPickerRole(event.target.value)}
+                className="search-input"
+                aria-label="Filter users by role"
+              >
+                {roleFilterOptions.map((opt) => (
+                  <option key={`override-pick-${opt.value || "all"}`} value={opt.value}>
+                    {opt.value === "" ? "All roles" : opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div className="day-override-user-list">
-            {usersBusy ? (
-              <p className="muted-note">Loading users…</p>
-            ) : filteredPickerUsers.length === 0 ? (
-              <p className="muted-note">No users found.</p>
-            ) : (
-              filteredPickerUsers.map((user) => (
-                <label key={user.id} className="day-override-user-item">
-                  <input
-                    type="checkbox"
-                    checked={selectedUserIds.includes(user.id)}
-                    onChange={() => toggleUserSelection(user.id)}
-                  />
-                  <span>
-                    <strong>{user.fullName}</strong>
-                    <small>
-                      {user.role} · {user.email}
-                    </small>
-                  </span>
-                </label>
-              ))
-            )}
-          </div>
+            <div className="day-override-user-list">
+              {usersBusy ? (
+                <p className="muted-note">Loading users…</p>
+              ) : filteredPickerUsers.length === 0 ? (
+                <p className="muted-note">No users found.</p>
+              ) : (
+                filteredPickerUsers.map((user) => (
+                  <label key={user.id} className="day-override-user-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedUserIds.includes(user.id)}
+                      onChange={() => toggleUserSelection(user.id)}
+                    />
+                    <span>
+                      <strong>{user.fullName}</strong>
+                      <small>
+                        {user.role} · {user.email}
+                      </small>
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
 
-          {mode === "custom" && selectedUsers.length > 0 ? (
-            <div className="day-override-custom-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Shift In</th>
-                    <th>Shift Out</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td>
-                        <strong>{user.fullName}</strong>
-                        <small>{user.email}</small>
-                      </td>
-                      <td>
-                        <input
-                          type="time"
-                          className="admin-dark-picker"
-                          value={
-                            customTimings[user.id]?.startTime ?? sameStartTime
-                          }
-                          onChange={(event) =>
-                            setCustomTimings((prev) => ({
-                              ...prev,
-                              [user.id]: {
-                                startTime: event.target.value,
-                                endTime:
-                                  prev[user.id]?.endTime ?? sameEndTime,
-                              },
-                            }))
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="time"
-                          className="admin-dark-picker"
-                          value={customTimings[user.id]?.endTime ?? sameEndTime}
-                          onChange={(event) =>
-                            setCustomTimings((prev) => ({
-                              ...prev,
-                              [user.id]: {
-                                startTime:
-                                  prev[user.id]?.startTime ?? sameStartTime,
-                                endTime: event.target.value,
-                              },
-                            }))
-                          }
-                        />
-                      </td>
+            {mode === "custom" && selectedUsers.length > 0 ? (
+              <div className="day-override-custom-table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th>Shift In</th>
+                      <th>Shift Out</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
+                  </thead>
+                  <tbody>
+                    {selectedUsers.map((user) => (
+                      <tr key={user.id}>
+                        <td>
+                          <strong>{user.fullName}</strong>
+                          <small>{user.email}</small>
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            className="admin-dark-picker"
+                            value={
+                              customTimings[user.id]?.startTime ?? sameStartTime
+                            }
+                            onChange={(event) =>
+                              setCustomTimings((prev) => ({
+                                ...prev,
+                                [user.id]: {
+                                  startTime: event.target.value,
+                                  endTime:
+                                    prev[user.id]?.endTime ?? sameEndTime,
+                                },
+                              }))
+                            }
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="time"
+                            className="admin-dark-picker"
+                            value={customTimings[user.id]?.endTime ?? sameEndTime}
+                            onChange={(event) =>
+                              setCustomTimings((prev) => ({
+                                ...prev,
+                                [user.id]: {
+                                  startTime:
+                                    prev[user.id]?.startTime ?? sameStartTime,
+                                  endTime: event.target.value,
+                                },
+                              }))
+                            }
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
 
-          {selectedUserIds.length > 0 ? (
-            <p className="muted-note">
-              {selectedUserIds.length} user(s) selected for{" "}
-              {formatOverrideDateLabel(formDate)}.
-            </p>
-          ) : null}
-        </div>
+            {selectedUserIds.length > 0 ? (
+              <p className="muted-note">
+                {selectedUserIds.length} user(s) selected
+                {dateScope === "single"
+                  ? ` for ${formatOverrideDateLabel(formDate)}.`
+                  : ` for ${resolveTargetDates().length} day(s) in range.`}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
-        <div className="day-override-actions">
-          <button
-            type="button"
-            className="primary-btn slim"
-            onClick={() => void handleSaveOverride()}
-            disabled={saveBusy}
-          >
-            {saveBusy ? "Saving…" : "Save override"}
-          </button>
-        </div>
+        {showTimingFields ? (
+          <div className="day-override-actions">
+            <button
+              type="button"
+              className="primary-btn slim"
+              onClick={() => void handleSaveOverride()}
+              disabled={saveBusy}
+            >
+              {saveBusy ? "Saving…" : "Save override"}
+            </button>
+          </div>
+        ) : null}
 
         <hr className="day-override-divider" />
 
@@ -590,12 +754,23 @@ export function DayScheduleOverridePanel({
         </div>
 
         <div className="filters-bar compact-filters">
-          <input
-            type="date"
-            className="overview-date-input-visible admin-dark-picker"
+          <select
             value={listDate}
             onChange={(event) => setListDate(event.target.value)}
-          />
+            className="search-input"
+            aria-label="Select override date"
+            disabled={overrideDates.length === 0}
+          >
+            {overrideDates.length === 0 ? (
+              <option value="">No saved override dates</option>
+            ) : (
+              overrideDates.map((date) => (
+                <option key={date} value={date}>
+                  {formatOverrideDateLabel(date)}
+                </option>
+              ))
+            )}
+          </select>
           <input
             value={listSearch}
             onChange={(event) => setListSearch(event.target.value)}
@@ -618,7 +793,7 @@ export function DayScheduleOverridePanel({
             type="button"
             className="primary-btn slim"
             onClick={() => void loadOverrides()}
-            disabled={listBusy}
+            disabled={listBusy || !listDate}
           >
             {listBusy ? "Loading…" : "Load overrides"}
           </button>
@@ -716,7 +891,7 @@ export function DayScheduleOverridePanel({
                           <button
                             type="button"
                             className="ghost-btn slim danger"
-                            onClick={() => void handleDeleteOverride(row)}
+                            onClick={() => setDeleteConfirm({ row })}
                           >
                             Delete
                           </button>
@@ -730,6 +905,21 @@ export function DayScheduleOverridePanel({
           </table>
         </div>
       </div>
+
+      {deleteConfirm ? (
+        <ConfirmModal
+          title="Remove override?"
+          message={`Remove override for ${deleteConfirm.row.fullName} on ${formatOverrideDateLabel(deleteConfirm.row.overrideDate)}?`}
+          confirmLabel="Delete"
+          cancelLabel="Cancel"
+          danger
+          busy={deleteBusy}
+          onConfirm={() => void confirmDeleteOverride()}
+          onCancel={() => {
+            if (!deleteBusy) setDeleteConfirm(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

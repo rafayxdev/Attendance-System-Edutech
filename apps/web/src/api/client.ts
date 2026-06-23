@@ -52,8 +52,15 @@ export async function apiRequest<T>(
     });
 
     return parseResponse<T>(response);
-  } catch {
-    throw new Error("Check internet connection.");
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    const message =
+      error instanceof TypeError
+        ? "Unable to reach the API server. Start it with npm run dev:api (port 4000)."
+        : "Check internet connection.";
+    throw new Error(message);
   }
 }
 

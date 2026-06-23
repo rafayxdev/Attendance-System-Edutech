@@ -36,8 +36,12 @@ export async function ensureMonthlyAttendanceTable(monthLabel: string) {
       unique_id TEXT,
       total_weekdays INTEGER NOT NULL DEFAULT 0,
       present_days INTEGER NOT NULL DEFAULT 0,
+      absent_days INTEGER NOT NULL DEFAULT 0,
       late_days INTEGER NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+  await prisma.$executeRawUnsafe(`
+    ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS absent_days INTEGER NOT NULL DEFAULT 0;
   `);
 }

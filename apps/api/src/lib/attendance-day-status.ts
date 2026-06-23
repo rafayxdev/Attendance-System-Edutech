@@ -36,3 +36,7 @@ export function dayCountsAsPresent(state: AttendanceDayState): boolean {
 export function dayCountsAsLate(state: AttendanceDayState): boolean {
   return resolveDisplayAttendanceStatus(state) === "Late";
 }
+
+export function dayCountsAsExplicitAbsent(state: AttendanceDayState): boolean {
+  return state.manualStatus === "Absent";
+}
