@@ -15,6 +15,10 @@ import {
   enumerateDatesInclusive,
   RANGE_OVERRIDE_AUDIT_ACTION,
 } from "../lib/override-ranges.js";
+import {
+  bulkUpsertDayScheduleOverrides,
+  expandOverrideRowsForRange,
+} from "../lib/day-schedule-override-bulk.js";
 
 export const dayScheduleOverridesRouter = Router();
 
@@ -378,65 +382,33 @@ dayScheduleOverridesRouter.post("/range", async (request, response) => {
 
   const actorEmail = (request as AuthenticatedRequest).auth?.email ?? null;
 
-  const saved = await prisma.$transaction(async (tx) => {
-    const results = [];
-    for (const date of dates) {
-      for (const entry of perDateEntries) {
-        const row = await tx.dayScheduleOverride.upsert({
-          where: {
-            userId_overrideDate: {
-              userId: entry.userId,
-              overrideDate: date,
-            },
-          },
-          create: {
-            userId: entry.userId,
-            overrideDate: date,
-            startTime: entry.startTime,
-            endTime: entry.endTime,
-          },
-          update: {
-            startTime: entry.startTime,
-            endTime: entry.endTime,
-          },
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-                fullName: true,
-                role: true,
-                uniqueId: true,
-              },
-            },
-          },
-        });
-        results.push(row);
-      }
-    }
+  const rowsToUpsert = expandOverrideRowsForRange({
+    dates,
+    entries: perDateEntries,
+  });
 
-    await tx.auditLog.create({
-      data: {
-        actorEmail,
-        action: RANGE_OVERRIDE_AUDIT_ACTION,
-        payload: {
-          rangeStart: payload.rangeStart,
-          rangeEnd: payload.rangeEnd,
-          mode: payload.mode,
-          userIds,
-          dayCount: dates.length,
-        },
+  const savedCount = await bulkUpsertDayScheduleOverrides(rowsToUpsert);
+
+  await prisma.auditLog.create({
+    data: {
+      actorEmail,
+      action: RANGE_OVERRIDE_AUDIT_ACTION,
+      payload: {
+        rangeStart: payload.rangeStart,
+        rangeEnd: payload.rangeEnd,
+        mode: payload.mode,
+        userIds,
+        dayCount: dates.length,
+        rowCount: savedCount,
       },
-    });
-
-    return results;
+    },
   });
 
   response.json({
     success: true,
     rangeStart: payload.rangeStart,
     rangeEnd: payload.rangeEnd,
-    count: saved.length,
+    count: savedCount,
     message: `Timing override saved for ${userIds.length} user(s) across ${dates.length} day(s).`,
   });
 });
