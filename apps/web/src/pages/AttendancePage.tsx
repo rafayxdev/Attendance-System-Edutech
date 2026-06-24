@@ -7,6 +7,7 @@ import { ImageCapture } from "../components/ImageCapture";
 import {
   formatInstant12hWithSeconds,
   formatInstantShortDate,
+  formatWallHm12h,
 } from "../lib/timeDisplay";
 import type { AuthSession, AccessPolicy } from "../types";
 import logoUrl from "../images/EduTech Logo.png";
@@ -67,6 +68,8 @@ function AttendanceContent({
   const [cameraAllowed, setCameraAllowed] = useState(true);
   const [windowMessage, setWindowMessage] = useState("");
   const [autoMessage, setAutoMessage] = useState("");
+  const [shiftIn, setShiftIn] = useState("");
+  const [shiftOut, setShiftOut] = useState("");
   const [liveNow, setLiveNow] = useState(() => new Date());
   const [loadingWindow, setLoadingWindow] = useState(false);
 
@@ -87,9 +90,13 @@ function AttendanceContent({
         recommendedType?: "Time In" | "Time Out";
         allowed: boolean;
         message: string | null;
+        shiftIn?: string;
+        shiftOut?: string;
       }>(`/attendance/user-window?type=${encodeURIComponent(selectedType)}`);
       setCameraAllowed(result.allowed);
       setWindowMessage(result.message ?? "");
+      if (result.shiftIn) setShiftIn(result.shiftIn);
+      if (result.shiftOut) setShiftOut(result.shiftOut);
       if (!result.allowed) {
         setImage("");
       }
@@ -108,9 +115,13 @@ function AttendanceContent({
         recommendedType: "Time In" | "Time Out";
         allowed: boolean;
         message: string | null;
+        shiftIn?: string;
+        shiftOut?: string;
       }>(`/attendance/user-window`);
       setType(result.recommendedType);
       setCameraAllowed(result.allowed);
+      if (result.shiftIn) setShiftIn(result.shiftIn);
+      if (result.shiftOut) setShiftOut(result.shiftOut);
       const msg = result.message ?? "";
       setWindowMessage(msg);
       setAutoMessage(msg);
@@ -279,6 +290,16 @@ function AttendanceContent({
                 </div>
               ) : null}
             </div>
+            {!loadingWindow && (type === "Time In" ? shiftIn : shiftOut) ? (
+              <div className="attendance-shift-time-banner" role="status">
+                <span>
+                  {type === "Time In" ? "Shift In Time" : "Shift Out Time"}
+                </span>
+                <strong>
+                  {formatWallHm12h(type === "Time In" ? shiftIn : shiftOut)}
+                </strong>
+              </div>
+            ) : null}
           </div>
 
           <div className="location-verified-banner">

@@ -14,7 +14,6 @@ import {
 } from "../lib/rules.js";
 import { getEffectiveDaySchedule } from "../lib/schedules.js";
 import {
-  dayCountsAsExplicitAbsent,
   dayCountsAsLate,
   dayCountsAsPresent,
   resolveDisplayAttendanceStatus,
@@ -335,14 +334,12 @@ async function rebuildMonthlySummaryForUser(params: {
     );
   }
 
-  const dayStates = Array.from(byDay.values());
-  const summaryDays = dayStates.filter(dayCountsAsPresent);
+  const summaryDays = Array.from(byDay.values()).filter(dayCountsAsPresent);
   const presentDays = summaryDays.length;
   const lateDays = summaryDays.filter(dayCountsAsLate).length;
-  const absentDays = dayStates.filter(dayCountsAsExplicitAbsent).length;
   const table = monthlyTableName(monthLabel);
 
-  if (presentDays <= 0 && absentDays <= 0 && lateDays <= 0) {
+  if (presentDays <= 0) {
     await prisma.$executeRawUnsafe(
       `DELETE FROM "${table}" WHERE user_id = $1`,
       user.id,
@@ -352,8 +349,8 @@ async function rebuildMonthlySummaryForUser(params: {
 
   await prisma.$executeRawUnsafe(
     `
-    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, absent_days, late_days, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+    INSERT INTO "${table}" (user_id, email, full_name, role, unique_id, total_weekdays, present_days, late_days, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
     ON CONFLICT (user_id) DO UPDATE SET
       email = EXCLUDED.email,
       full_name = EXCLUDED.full_name,
@@ -361,7 +358,6 @@ async function rebuildMonthlySummaryForUser(params: {
       unique_id = EXCLUDED.unique_id,
       total_weekdays = EXCLUDED.total_weekdays,
       present_days = EXCLUDED.present_days,
-      absent_days = EXCLUDED.absent_days,
       late_days = EXCLUDED.late_days,
       updated_at = NOW();
     `,
@@ -372,7 +368,6 @@ async function rebuildMonthlySummaryForUser(params: {
     user.uniqueId,
     totalWeekdays,
     presentDays,
-    absentDays,
     lateDays,
   );
 }
@@ -1655,6 +1650,7 @@ adminRouter.get(
         attendanceDay: true,
         attendanceType: true,
         status: true,
+        purpose: true,
         createdAt: true,
       },
       orderBy: { createdAt: "asc" },
@@ -1665,6 +1661,7 @@ adminRouter.get(
       Array<{
         attendanceType: string;
         status: string;
+        purpose: string | null;
         createdAt: Date;
       }>
     >();
@@ -1673,6 +1670,7 @@ adminRouter.get(
       existing.push({
         attendanceType: log.attendanceType,
         status: log.status,
+        purpose: log.purpose ?? null,
         createdAt: log.createdAt,
       });
       logsByDay.set(log.attendanceDay, existing);
@@ -1713,6 +1711,9 @@ adminRouter.get(
         const timeOutLog = dayLogs.find(
           (log) => log.attendanceType === "Time Out",
         );
+        const manualLog = dayLogs.find(
+          (log) => log.attendanceType === "Manual Attendance",
+        );
 
         let status: "Present" | "Absent" | "Late" | "Not Marked" = "Not Marked";
         if (state.manualStatus || state.hasTimeIn || state.hasTimeOut) {
@@ -1742,6 +1743,7 @@ adminRouter.get(
               : "—",
           status,
           markedBy,
+          reason: manualLog?.purpose?.trim() || "—",
         };
       });
 
@@ -1804,11 +1806,11 @@ adminRouter.get(
         unique_id AS "uniqueId",
         total_weekdays AS "totalWeekdays",
         present_days AS "presentDays",
-        GREATEST(0, COALESCE(absent_days, 0)) AS "absentDays",
+        GREATEST(0, total_weekdays - present_days) AS "absentDays",
         late_days AS "lateDays",
         FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
         GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
-        GREATEST(0, COALESCE(absent_days, 0)) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
       WHERE ($2 = '' OR email ILIKE '%' || $2 || '%' OR full_name ILIKE '%' || $2 || '%' OR role ILIKE '%' || $2 || '%' OR COALESCE(unique_id,'') ILIKE '%' || $2 || '%')
         AND ($3 = '' OR LOWER(role) = LOWER($3))
@@ -1889,11 +1891,11 @@ adminRouter.get(
         unique_id AS "uniqueId",
         total_weekdays AS "totalWeekdays",
         present_days AS "presentDays",
-        GREATEST(0, COALESCE(absent_days, 0)) AS "absentDays",
+        GREATEST(0, total_weekdays - present_days) AS "absentDays",
         late_days AS "lateDays",
         FLOOR(late_days / 3.0) :: int AS "latePenaltyAbsents",
         GREATEST(0, present_days - FLOOR(late_days / 3.0) :: int) AS "effectivePresent",
-        GREATEST(0, COALESCE(absent_days, 0)) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
+        GREATEST(0, total_weekdays - present_days) + FLOOR(late_days / 3.0) :: int AS "effectiveAbsent"
       FROM "${table}"
       WHERE ($2 = '' OR LOWER(role) = LOWER($2))
       ORDER BY full_name ASC

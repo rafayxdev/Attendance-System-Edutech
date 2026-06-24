@@ -10,6 +10,11 @@ import {
   hasInvalidTimeRange,
   TIME_REGEX,
 } from "../lib/schedules.js";
+import {
+  buildOverrideRangeGroups,
+  enumerateDatesInclusive,
+  RANGE_OVERRIDE_AUDIT_ACTION,
+} from "../lib/override-ranges.js";
 
 export const dayScheduleOverridesRouter = Router();
 
@@ -52,6 +57,46 @@ const createSchema = z.discriminatedUnion("mode", [
 ]);
 
 const updateSchema = timingSchema;
+
+const createRangeSameSchema = z.object({
+  rangeStart: dateSchema,
+  rangeEnd: dateSchema,
+  mode: z.literal("same"),
+  userIds: z.array(z.string().min(1)).min(1).max(500),
+  startTime: z.string().regex(TIME_REGEX),
+  endTime: z.string().regex(TIME_REGEX),
+});
+
+const createRangeCustomSchema = z.object({
+  rangeStart: dateSchema,
+  rangeEnd: dateSchema,
+  mode: z.literal("custom"),
+  entries: z
+    .array(
+      z.object({
+        userId: z.string().min(1),
+        startTime: z.string().regex(TIME_REGEX),
+        endTime: z.string().regex(TIME_REGEX),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
+
+const createRangeSchema = z.discriminatedUnion("mode", [
+  createRangeSameSchema,
+  createRangeCustomSchema,
+]);
+
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(500),
+});
+
+const rangeDeleteSchema = z.object({
+  userId: z.string().min(1),
+  rangeStart: dateSchema,
+  rangeEnd: dateSchema,
+});
 
 function formatOverrideRow(row: {
   id: string;
@@ -139,6 +184,261 @@ dayScheduleOverridesRouter.get("/", async (request, response) => {
   });
 
   response.json(rows.map(formatOverrideRow));
+});
+
+async function loadFilteredOverrides(params: {
+  search: string;
+  role: string;
+}) {
+  const where: {
+    user?: {
+      OR?: Array<Record<string, unknown>>;
+      role?: { equals: string; mode: "insensitive" };
+    };
+  } = {};
+
+  if (params.role) {
+    where.user = {
+      ...(where.user ?? {}),
+      role: { equals: params.role, mode: "insensitive" },
+    };
+  }
+
+  if (params.search) {
+    where.user = {
+      ...(where.user ?? {}),
+      OR: [
+        { email: { contains: params.search, mode: "insensitive" } },
+        { fullName: { contains: params.search, mode: "insensitive" } },
+        { role: { contains: params.search, mode: "insensitive" } },
+        { uniqueId: { contains: params.search, mode: "insensitive" } },
+      ],
+    };
+  }
+
+  const rows = await prisma.dayScheduleOverride.findMany({
+    where,
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          uniqueId: true,
+        },
+      },
+    },
+    orderBy: [{ overrideDate: "desc" }, { user: { fullName: "asc" } }],
+    take: 5000,
+  });
+
+  return rows.map(formatOverrideRow);
+}
+
+dayScheduleOverridesRouter.get("/ranges", async (request, response) => {
+  const search = String(request.query.search ?? "").trim();
+  const role = String(request.query.role ?? "").trim();
+
+  const overrides = await loadFilteredOverrides({ search, role });
+  const auditLogs = await prisma.auditLog.findMany({
+    where: { action: RANGE_OVERRIDE_AUDIT_ACTION },
+    orderBy: { createdAt: "desc" },
+    take: 1000,
+    select: { payload: true },
+  });
+
+  const auditPayloads = auditLogs
+    .map((log) => log.payload as Record<string, unknown>)
+    .filter((payload) => payload && typeof payload === "object")
+    .map((payload) => ({
+      rangeStart:
+        typeof payload.rangeStart === "string" ? payload.rangeStart : undefined,
+      rangeEnd:
+        typeof payload.rangeEnd === "string" ? payload.rangeEnd : undefined,
+      userIds: Array.isArray(payload.userIds)
+        ? payload.userIds.filter((id): id is string => typeof id === "string")
+        : [],
+    }));
+
+  response.json(
+    buildOverrideRangeGroups({
+      overrides,
+      auditPayloads,
+    }),
+  );
+});
+
+dayScheduleOverridesRouter.post("/bulk-delete", async (request, response) => {
+  const parsed = bulkDeleteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Invalid bulk delete payload." });
+    return;
+  }
+
+  const ids = [...new Set(parsed.data.ids)];
+  const rows = await prisma.dayScheduleOverride.findMany({
+    where: { id: { in: ids } },
+    select: { id: true },
+  });
+
+  if (rows.length === 0) {
+    response.status(404).json({ message: "No overrides found to delete." });
+    return;
+  }
+
+  await prisma.dayScheduleOverride.deleteMany({
+    where: { id: { in: rows.map((row) => row.id) } },
+  });
+
+  response.json({
+    success: true,
+    count: rows.length,
+    message: `Removed ${rows.length} override(s).`,
+  });
+});
+
+dayScheduleOverridesRouter.post("/range-delete", async (request, response) => {
+  const parsed = rangeDeleteSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Invalid range delete payload." });
+    return;
+  }
+
+  const { userId, rangeStart, rangeEnd } = parsed.data;
+  if (rangeEnd < rangeStart) {
+    response.status(400).json({ message: "Invalid date range." });
+    return;
+  }
+
+  const result = await prisma.dayScheduleOverride.deleteMany({
+    where: {
+      userId,
+      overrideDate: { gte: rangeStart, lte: rangeEnd },
+    },
+  });
+
+  response.json({
+    success: true,
+    count: result.count,
+    message: `Removed ${result.count} override(s) for the selected range.`,
+  });
+});
+
+dayScheduleOverridesRouter.post("/range", async (request, response) => {
+  const parsed = createRangeSchema.safeParse(request.body);
+  if (!parsed.success) {
+    response.status(400).json({ message: "Invalid range override payload." });
+    return;
+  }
+
+  const payload = parsed.data;
+  if (payload.rangeEnd < payload.rangeStart) {
+    response.status(400).json({ message: "Range end must be on or after start." });
+    return;
+  }
+
+  const dates = enumerateDatesInclusive(payload.rangeStart, payload.rangeEnd);
+  if (dates.length === 0) {
+    response.status(400).json({ message: "Range contains no dates." });
+    return;
+  }
+  if (dates.length > 366) {
+    response.status(400).json({ message: "Range is too large (max 366 days)." });
+    return;
+  }
+
+  const perDateEntries =
+    payload.mode === "same"
+      ? payload.userIds.map((userId) => ({
+          userId,
+          startTime: payload.startTime,
+          endTime: payload.endTime,
+        }))
+      : payload.entries;
+
+  for (const entry of perDateEntries) {
+    if (hasInvalidTimeRange(entry.startTime, entry.endTime)) {
+      response.status(400).json({
+        message: "Each override must have end time after start time.",
+      });
+      return;
+    }
+  }
+
+  const userIds = [...new Set(perDateEntries.map((entry) => entry.userId))];
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true },
+  });
+  if (users.length !== userIds.length) {
+    response.status(400).json({ message: "One or more selected users were not found." });
+    return;
+  }
+
+  const actorEmail = (request as AuthenticatedRequest).auth?.email ?? null;
+
+  const saved = await prisma.$transaction(async (tx) => {
+    const results = [];
+    for (const date of dates) {
+      for (const entry of perDateEntries) {
+        const row = await tx.dayScheduleOverride.upsert({
+          where: {
+            userId_overrideDate: {
+              userId: entry.userId,
+              overrideDate: date,
+            },
+          },
+          create: {
+            userId: entry.userId,
+            overrideDate: date,
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+          },
+          update: {
+            startTime: entry.startTime,
+            endTime: entry.endTime,
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                fullName: true,
+                role: true,
+                uniqueId: true,
+              },
+            },
+          },
+        });
+        results.push(row);
+      }
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actorEmail,
+        action: RANGE_OVERRIDE_AUDIT_ACTION,
+        payload: {
+          rangeStart: payload.rangeStart,
+          rangeEnd: payload.rangeEnd,
+          mode: payload.mode,
+          userIds,
+          dayCount: dates.length,
+        },
+      },
+    });
+
+    return results;
+  });
+
+  response.json({
+    success: true,
+    rangeStart: payload.rangeStart,
+    rangeEnd: payload.rangeEnd,
+    count: saved.length,
+    message: `Timing override saved for ${userIds.length} user(s) across ${dates.length} day(s).`,
+  });
 });
 
 dayScheduleOverridesRouter.get("/dates", async (_request, response) => {

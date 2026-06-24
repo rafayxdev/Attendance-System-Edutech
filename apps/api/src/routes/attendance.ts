@@ -612,6 +612,8 @@ attendanceRouter.get(
       message: effectiveMessage ?? message,
       done: hasTimeIn && hasTimeOut,
       scheduleSource: effective.source,
+      shiftIn: todaySlot.startTime,
+      shiftOut: todaySlot.endTime,
       allowedByType: { "Time In": timeInAllowed, "Time Out": timeOutAllowed },
       messageByType: { "Time In": timeInMessage, "Time Out": timeOutMessage },
     });

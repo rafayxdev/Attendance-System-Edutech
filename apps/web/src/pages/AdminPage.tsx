@@ -291,6 +291,7 @@ type StudentDailyAttendanceRow = {
   timeOut: string;
   status: "Present" | "Absent" | "Late" | "Not Marked";
   markedBy: "Manual" | "Self" | "—";
+  reason: string;
 };
 
 type StudentDailyAttendanceResponse = {
@@ -3652,8 +3653,7 @@ function AdminContent({
                 </div>
               ) : null}
               <div className="notice info">
-                Absent counts only days explicitly marked Absent. 3 Late days
-                are counted as 1 Absent day in Effective totals.
+                3 Late days are counted as 1 Absent day in Effective totals.
               </div>
             </div>
           </section>
@@ -3749,13 +3749,14 @@ function AdminContent({
                       <th>Time In</th>
                       <th>Time Out</th>
                       <th>Status</th>
+                      <th>Reason</th>
                       <th>Marked By</th>
                     </tr>
                   </thead>
                   <tbody>
                     {dailyData.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="empty-row">
+                        <td colSpan={8} className="empty-row">
                           Select a user and month, then load daily attendance.
                         </td>
                       </tr>
@@ -3774,6 +3775,7 @@ function AdminContent({
                               {row.status}
                             </span>
                           </td>
+                          <td>{row.reason}</td>
                           <td>{row.markedBy}</td>
                         </tr>
                       ))
