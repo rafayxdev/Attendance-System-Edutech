@@ -134,11 +134,13 @@ function formatOverrideRow(row: {
 
 dayScheduleOverridesRouter.get("/", async (request, response) => {
   const dateRaw = String(request.query.date ?? "").trim();
+  const userId = String(request.query.userId ?? "").trim();
   const search = String(request.query.search ?? "").trim();
   const role = String(request.query.role ?? "").trim();
 
   const where: {
     overrideDate?: string;
+    userId?: string;
     user?: {
       OR?: Array<Record<string, unknown>>;
       role?: { equals: string; mode: "insensitive" };
@@ -152,6 +154,10 @@ dayScheduleOverridesRouter.get("/", async (request, response) => {
       return;
     }
     where.overrideDate = parsedDate.data;
+  }
+
+  if (userId) {
+    where.userId = userId;
   }
 
   if (role) {
@@ -184,10 +190,79 @@ dayScheduleOverridesRouter.get("/", async (request, response) => {
       },
     },
     orderBy: [{ overrideDate: "desc" }, { user: { fullName: "asc" } }],
-    take: 2000,
+    take: userId ? 5000 : 2000,
   });
 
   response.json(rows.map(formatOverrideRow));
+});
+
+dayScheduleOverridesRouter.get("/users-with-overrides", async (request, response) => {
+  const role = String(request.query.role ?? "").trim();
+  const search = String(request.query.search ?? "").trim().toLowerCase();
+
+  const overrides = await prisma.dayScheduleOverride.findMany({
+    where: role
+      ? { user: { role: { equals: role, mode: "insensitive" } } }
+      : {},
+    select: {
+      userId: true,
+      user: {
+        select: {
+          id: true,
+          email: true,
+          fullName: true,
+          role: true,
+          uniqueId: true,
+        },
+      },
+    },
+    orderBy: { user: { fullName: "asc" } },
+  });
+
+  const counts = new Map<string, number>();
+  const usersById = new Map<
+    string,
+    {
+      userId: string;
+      fullName: string;
+      email: string;
+      role: string;
+      uniqueId: string;
+      overrideCount: number;
+    }
+  >();
+
+  for (const row of overrides) {
+    counts.set(row.userId, (counts.get(row.userId) ?? 0) + 1);
+    if (!usersById.has(row.userId)) {
+      usersById.set(row.userId, {
+        userId: row.user.id,
+        fullName: row.user.fullName,
+        email: row.user.email,
+        role: row.user.role,
+        uniqueId: row.user.uniqueId ?? "N/A",
+        overrideCount: 0,
+      });
+    }
+  }
+
+  const users = Array.from(usersById.values())
+    .map((user) => ({
+      ...user,
+      overrideCount: counts.get(user.userId) ?? 0,
+    }))
+    .filter((user) => {
+      if (!search) return true;
+      return (
+        user.fullName.toLowerCase().includes(search) ||
+        user.email.toLowerCase().includes(search) ||
+        user.role.toLowerCase().includes(search) ||
+        user.uniqueId.toLowerCase().includes(search)
+      );
+    })
+    .sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+  response.json(users);
 });
 
 async function loadFilteredOverrides(params: {

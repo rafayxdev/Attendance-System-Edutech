@@ -38,30 +38,18 @@ type RoleFilterOption = { value: string; label: string };
 
 type SavedViewMode = "single" | "range";
 
-type OverrideRangeGroup = {
-  rangeKey: string;
+type OverrideUserOption = {
   userId: string;
   fullName: string;
   email: string;
   role: string;
   uniqueId: string;
-  rangeStart: string;
-  rangeEnd: string;
-  source: "saved" | "inferred";
-  overrides: DayOverrideRow[];
+  overrideCount: number;
 };
 
 type DeleteConfirmState =
   | { kind: "single"; row: DayOverrideRow }
-  | { kind: "bulk"; ids: string[]; count: number }
-  | {
-      kind: "range";
-      userId: string;
-      fullName: string;
-      rangeStart: string;
-      rangeEnd: string;
-      count: number;
-    };
+  | { kind: "bulk"; ids: string[]; count: number };
 
 interface DayScheduleOverridePanelProps {
   roleFilterOptions: RoleFilterOption[];
@@ -130,7 +118,9 @@ export function DayScheduleOverridePanel({
   const [listSearch, setListSearch] = useState("");
   const [listRole, setListRole] = useState("");
   const [overrides, setOverrides] = useState<DayOverrideRow[]>([]);
-  const [rangeGroups, setRangeGroups] = useState<OverrideRangeGroup[]>([]);
+  const [overrideUsers, setOverrideUsers] = useState<OverrideUserOption[]>([]);
+  const [rangeSelectedUserId, setRangeSelectedUserId] = useState("");
+  const [userOverrides, setUserOverrides] = useState<DayOverrideRow[]>([]);
   const [selectedOverrideIds, setSelectedOverrideIds] = useState<string[]>([]);
   const [listBusy, setListBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
@@ -191,21 +181,52 @@ export function DayScheduleOverridePanel({
     }
   }
 
-  async function loadRangeGroups() {
+  async function loadOverrideUsers() {
     setListBusy(true);
     try {
       const query = new URLSearchParams();
-      if (listSearch.trim()) query.set("search", listSearch.trim());
       if (listRole.trim()) query.set("role", listRole.trim());
-      const groups = await apiRequest<OverrideRangeGroup[]>(
-        `/admin/day-schedule-overrides/ranges?${query.toString()}`,
+      if (listSearch.trim()) query.set("search", listSearch.trim());
+      const users = await apiRequest<OverrideUserOption[]>(
+        `/admin/day-schedule-overrides/users-with-overrides?${query.toString()}`,
       );
-      setRangeGroups(groups);
+      setOverrideUsers(users);
+      if (
+        rangeSelectedUserId &&
+        !users.some((user) => user.userId === rangeSelectedUserId)
+      ) {
+        setRangeSelectedUserId("");
+        setUserOverrides([]);
+        setSelectedOverrideIds([]);
+      }
+    } catch (error) {
+      console.error(error);
+      setMessageIsError(true);
+      setMessage("Unable to load users with overrides.");
+    } finally {
+      setListBusy(false);
+    }
+  }
+
+  async function loadUserOverrides(userId: string) {
+    if (!userId) {
+      setUserOverrides([]);
+      return;
+    }
+
+    setListBusy(true);
+    try {
+      const query = new URLSearchParams();
+      query.set("userId", userId);
+      const rows = await apiRequest<DayOverrideRow[]>(
+        `/admin/day-schedule-overrides?${query.toString()}`,
+      );
+      setUserOverrides(rows);
       setSelectedOverrideIds([]);
     } catch (error) {
       console.error(error);
       setMessageIsError(true);
-      setMessage("Unable to load override ranges.");
+      setMessage("Unable to load overrides for this user.");
     } finally {
       setListBusy(false);
     }
@@ -216,7 +237,12 @@ export function DayScheduleOverridePanel({
     if (savedViewMode === "single") {
       await loadOverrides();
     } else {
-      await loadRangeGroups();
+      await loadOverrideUsers();
+      if (rangeSelectedUserId) {
+        await loadUserOverrides(rangeSelectedUserId);
+      } else {
+        setUserOverrides([]);
+      }
     }
   }
 
@@ -259,9 +285,20 @@ export function DayScheduleOverridePanel({
 
   useEffect(() => {
     if (savedViewMode === "range") {
-      void loadRangeGroups();
+      void loadOverrideUsers();
     }
   }, [savedViewMode]);
+
+  useEffect(() => {
+    if (savedViewMode === "range" && rangeSelectedUserId) {
+      void loadUserOverrides(rangeSelectedUserId);
+    }
+  }, [rangeSelectedUserId, savedViewMode]);
+
+  const selectedOverrideUser = useMemo(
+    () => overrideUsers.find((user) => user.userId === rangeSelectedUserId),
+    [overrideUsers, rangeSelectedUserId],
+  );
 
   const filteredPickerUsers = useMemo(() => {
     const search = userPickerSearch.trim().toLowerCase();
@@ -479,7 +516,11 @@ export function DayScheduleOverridePanel({
       setMessageIsError(false);
       setMessage(result.message);
       setEditingId(null);
-      await refreshSavedOverrides();
+      if (savedViewMode === "range" && rangeSelectedUserId) {
+        await loadUserOverrides(rangeSelectedUserId);
+      } else {
+        await loadOverrides();
+      }
       onChanged?.();
     } catch (error) {
       setMessageIsError(true);
@@ -513,20 +554,6 @@ export function DayScheduleOverridePanel({
         );
         resultMessage = result.message;
         setSelectedOverrideIds([]);
-      } else {
-        const result = await apiRequest<{ message: string }>(
-          "/admin/day-schedule-overrides/range-delete",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              userId: deleteConfirm.userId,
-              rangeStart: deleteConfirm.rangeStart,
-              rangeEnd: deleteConfirm.rangeEnd,
-            }),
-          },
-        );
-        resultMessage = result.message;
-        setSelectedOverrideIds([]);
       }
 
       setMessageIsError(false);
@@ -550,8 +577,8 @@ export function DayScheduleOverridePanel({
     );
   }
 
-  function toggleRangeSelection(group: OverrideRangeGroup) {
-    const ids = group.overrides.map((row) => row.id);
+  function toggleAllUserOverrides() {
+    const ids = userOverrides.map((row) => row.id);
     const allSelected = ids.every((id) => selectedOverrideIds.includes(id));
     setSelectedOverrideIds((prev) => {
       if (allSelected) {
@@ -566,14 +593,13 @@ export function DayScheduleOverridePanel({
     if (deleteConfirm.kind === "single") {
       return `Remove override for ${deleteConfirm.row.fullName} on ${formatOverrideDateLabel(deleteConfirm.row.overrideDate)}?`;
     }
-    if (deleteConfirm.kind === "bulk") {
-      return `Remove ${deleteConfirm.count} selected override(s)?`;
-    }
-    return `Remove all ${deleteConfirm.count} override(s) for ${deleteConfirm.fullName} from ${formatOverrideDateLabel(deleteConfirm.rangeStart)} to ${formatOverrideDateLabel(deleteConfirm.rangeEnd)}?`;
+    return `Remove ${deleteConfirm.count} selected override(s)?`;
   }
 
   function loadExistingIntoForm(date: string) {
-    const rowsForDate = overrides.filter((row) => row.overrideDate === date);
+    const sourceRows =
+      savedViewMode === "range" ? userOverrides : overrides;
+    const rowsForDate = sourceRows.filter((row) => row.overrideDate === date);
     if (rowsForDate.length === 0) return;
 
     setDateScope("single");
@@ -896,7 +922,9 @@ export function DayScheduleOverridePanel({
           <span className="muted-note">
             {savedViewMode === "single"
               ? `${overrides.length} record${overrides.length === 1 ? "" : "s"}${listDate ? ` · ${formatOverrideDateLabel(listDate)}` : ""}`
-              : `${rangeGroups.length} range group${rangeGroups.length === 1 ? "" : "s"}`}
+              : rangeSelectedUserId && selectedOverrideUser
+                ? `${userOverrides.length} override${userOverrides.length === 1 ? "" : "s"} · ${selectedOverrideUser.fullName}`
+                : "Select a user to view overrides"}
           </span>
         </div>
 
@@ -922,6 +950,8 @@ export function DayScheduleOverridePanel({
               onChange={() => {
                 setSavedViewMode("range");
                 setSelectedOverrideIds([]);
+                setRangeSelectedUserId("");
+                setUserOverrides([]);
               }}
             />
             Range
@@ -947,7 +977,33 @@ export function DayScheduleOverridePanel({
                 ))
               )}
             </select>
-          ) : null}
+          ) : (
+            <select
+              value={rangeSelectedUserId}
+              onChange={(event) => {
+                setRangeSelectedUserId(event.target.value);
+                setSelectedOverrideIds([]);
+                if (!event.target.value) {
+                  setUserOverrides([]);
+                }
+              }}
+              className="search-input"
+              aria-label="Select user with overrides"
+              disabled={overrideUsers.length === 0 && !listBusy}
+            >
+              <option value="">
+                {overrideUsers.length === 0
+                  ? "No users with overrides"
+                  : "Select user"}
+              </option>
+              {overrideUsers.map((user) => (
+                <option key={user.userId} value={user.userId}>
+                  {user.fullName} · {user.overrideCount} override
+                  {user.overrideCount === 1 ? "" : "s"}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             value={listSearch}
             onChange={(event) => setListSearch(event.target.value)}
@@ -972,7 +1028,12 @@ export function DayScheduleOverridePanel({
             onClick={() =>
               void (savedViewMode === "single"
                 ? loadOverrides()
-                : loadRangeGroups())
+                : (async () => {
+                    await loadOverrideUsers();
+                    if (rangeSelectedUserId) {
+                      await loadUserOverrides(rangeSelectedUserId);
+                    }
+                  })())
             }
             disabled={listBusy || (savedViewMode === "single" && !listDate)}
           >
@@ -1103,105 +1164,149 @@ export function DayScheduleOverridePanel({
             </tbody>
           </table>
         </div>
-        ) : (
-          <div className="day-override-range-groups">
-            {rangeGroups.length === 0 ? (
-              <p className="muted-note empty-row">No override ranges found.</p>
-            ) : (
-              rangeGroups.map((group) => {
-                const groupIds = group.overrides.map((row) => row.id);
-                const allGroupSelected = groupIds.every((id) =>
-                  selectedOverrideIds.includes(id),
-                );
-                return (
-                  <section
-                    key={group.rangeKey}
-                    className="day-override-range-group"
+        ) : rangeSelectedUserId ? (
+          <div className="table-wrap">
+            <div className="schedule-head">
+              <strong>
+                {selectedOverrideUser?.fullName ?? "Selected user"}
+              </strong>
+              {selectedOverrideUser ? (
+                <span className="muted-note">
+                  {selectedOverrideUser.role} · {selectedOverrideUser.email} ·{" "}
+                  {selectedOverrideUser.uniqueId}
+                </span>
+              ) : null}
+              <div className="schedule-head-actions">
+                {userOverrides.length > 0 ? (
+                  <button
+                    type="button"
+                    className="ghost-btn slim"
+                    onClick={toggleAllUserOverrides}
                   >
-                    <div className="schedule-head">
-                      <div>
-                        <strong>{group.fullName}</strong>
-                        <small>
-                          {group.role} · {group.email}
-                        </small>
-                        <p className="muted-note">
-                          Range: {formatOverrideDateLabel(group.rangeStart)} –{" "}
-                          {formatOverrideDateLabel(group.rangeEnd)} ·{" "}
-                          {group.overrides.length} day(s)
-                        </p>
-                      </div>
-                      <div className="schedule-head-actions">
-                        <button
-                          type="button"
-                          className="ghost-btn slim"
-                          onClick={() => toggleRangeSelection(group)}
-                        >
-                          {allGroupSelected ? "Clear range" : "Select range"}
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost-btn slim danger"
-                          onClick={() =>
-                            setDeleteConfirm({
-                              kind: "range",
-                              userId: group.userId,
-                              fullName: group.fullName,
-                              rangeStart: group.rangeStart,
-                              rangeEnd: group.rangeEnd,
-                              count: group.overrides.length,
-                            })
-                          }
-                        >
-                          Delete entire range
-                        </button>
-                      </div>
-                    </div>
-                    <div className="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Select</th>
-                            <th>Date</th>
-                            <th>Shift In</th>
-                            <th>Shift Out</th>
-                            <th>Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {group.overrides.map((row) => (
-                            <tr key={row.id}>
-                              <td>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedOverrideIds.includes(row.id)}
-                                  onChange={() => toggleOverrideSelection(row.id)}
-                                  aria-label={`Select override for ${formatOverrideDateLabel(row.overrideDate)}`}
-                                />
-                              </td>
-                              <td>{formatOverrideDateLabel(row.overrideDate)}</td>
-                              <td>{formatWallHm12h(row.startTime)}</td>
-                              <td>{formatWallHm12h(row.endTime)}</td>
-                              <td className="day-override-row-actions">
-                                <button
-                                  type="button"
-                                  className="ghost-btn slim danger"
-                                  onClick={() =>
-                                    setDeleteConfirm({ kind: "single", row })
-                                  }
-                                >
-                                  Delete
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </section>
-                );
-              })
-            )}
+                    {userOverrides.every((row) =>
+                      selectedOverrideIds.includes(row.id),
+                    )
+                      ? "Clear selection"
+                      : "Select all"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Select</th>
+                  <th>Date</th>
+                  <th>Shift In</th>
+                  <th>Shift Out</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {userOverrides.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="empty-row">
+                      No overrides for this user.
+                    </td>
+                  </tr>
+                ) : (
+                  userOverrides.map((row) => (
+                    <tr key={row.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedOverrideIds.includes(row.id)}
+                          onChange={() => toggleOverrideSelection(row.id)}
+                          aria-label={`Select override for ${formatOverrideDateLabel(row.overrideDate)}`}
+                        />
+                      </td>
+                      <td>{formatOverrideDateLabel(row.overrideDate)}</td>
+                      <td>
+                        {editingId === row.id ? (
+                          <input
+                            type="time"
+                            className="admin-dark-picker"
+                            value={editStartTime}
+                            onChange={(event) =>
+                              setEditStartTime(event.target.value)
+                            }
+                          />
+                        ) : (
+                          formatWallHm12h(row.startTime)
+                        )}
+                      </td>
+                      <td>
+                        {editingId === row.id ? (
+                          <input
+                            type="time"
+                            className="admin-dark-picker"
+                            value={editEndTime}
+                            onChange={(event) =>
+                              setEditEndTime(event.target.value)
+                            }
+                          />
+                        ) : (
+                          formatWallHm12h(row.endTime)
+                        )}
+                      </td>
+                      <td className="day-override-row-actions">
+                        {editingId === row.id ? (
+                          <>
+                            <button
+                              type="button"
+                              className="ghost-btn slim"
+                              disabled={editBusy}
+                              onClick={() => void handleUpdateOverride(row.id)}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-btn slim"
+                              onClick={cancelEdit}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="ghost-btn slim"
+                              onClick={() => startEdit(row)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-btn slim"
+                              onClick={() => loadExistingIntoForm(row.overrideDate)}
+                            >
+                              Load in form
+                            </button>
+                            <button
+                              type="button"
+                              className="ghost-btn slim danger"
+                              onClick={() =>
+                                setDeleteConfirm({ kind: "single", row })
+                              }
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
+        ) : (
+          <p className="muted-note">
+            Select a user from the dropdown to view all of their overrides
+            (range and specific day).
+          </p>
         )}
       </div>
 
